@@ -1,6 +1,6 @@
 {
   "name": "code-pet",
-  "version": "1.0.3",
+  "version": "1.0.5",
   "private": false,
   "description": "Multi-provider desktop companion for Codex, Antigravity, Claude, and Grok.",
   "desktopName": "CodePet.desktop",
@@ -10,7 +10,9 @@
     "code-pet": "bin/code-pet.js"
   },
   "files": [
+    "THIRD_PARTY_NOTICES.md",
     "src/**/*.js",
+    "src/**/*.cs",
     "src/**/*.html",
     "src/**/*.css",
     "src/**/*.json",
@@ -35,7 +37,9 @@
       "output": "artifacts"
     },
     "files": [
+      "THIRD_PARTY_NOTICES.md",
       "src/**/*.js",
+      "src/**/*.cs",
       "src/**/*.html",
       "src/**/*.css",
       "src/**/*.json",

@@ -346,11 +346,11 @@ function createUsageGauge(gauge) {
   const row = createElement("div", "usage-row");
   row.append(
     createElement("span", "", gauge.label),
-    createElement("strong", "", `${remaining}%`)
+    createElement("strong", "", `${remaining}% 남음`)
   );
   const track = createElement("div", "usage-track");
   const fill = createElement("i", used >= 90 ? "is-danger" : used >= 70 ? "is-warn" : "");
-  fill.style.width = `${used}%`;
+  fill.style.width = `${remaining}%`;
   track.appendChild(fill);
   container.append(row, track, createElement("small", "", resetLabel(gauge.resetText)));
   return container;

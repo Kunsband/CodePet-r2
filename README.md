@@ -54,6 +54,8 @@ npm run dev
 
 ### Usage limits
 
+On Windows, the smallest remaining quota for each signed-in service is displayed inside the primary horizontal taskbar, beside the notification area. Click it or the tray icon to see all reported remaining limits, reset times, and the last update. It refreshes every five minutes; failed refreshes keep the previous reading marked as stale. Missing limits display `—`, not a guessed percentage. Both the pet's right-click menu and the tray menu include **View remaining limits** (`남은 한도 보기…`) and **Show in taskbar** (`작업표시줄에 표시`). The panel shows the currently signed-in account for each service, not inactive saved accounts. Other platforms use the tray menu; no floating usage bar is shown.
+
 Double-click the pet to open the `한도` (Limits) page in Settings. Cards show current account limits for Codex, AGY, and Claude, plus whether Grok usage lookup is supported. Account switching is kept outside the cards. Grok CLI 1.0.0 does not expose an account-limit command, so CodePet reports it as unsupported. Codex does not assume a fixed five-hour cycle; it reads the actual server-provided periods and dynamically shows five-hour, weekly, monthly, and model-specific limits. Gauges turn yellow above 70% usage and red above 90%.
 
 When Codex usage exceeds 90%, CodePet shows one warning bubble per reset period.
@@ -68,6 +70,8 @@ The context menu and system tray provide the same saved-account list and `로그
 - **Grok:** Preserve the current OAuth account from `~/.grok/auth.json` as a profile and switch it atomically. Grok hot-reloads the credential file, so CodePet does not terminate a running CLI; the selected account is used from the next API call. Environment-variable API keys and external authentication are shown as status only and are not copied into profile files.
 
 Profiles are stored under `~/.codepet/codex-switch`, `~/.codepet/antigravity-switch`, `~/.codepet/claude-switch`, and `~/.codepet/grok-switch`. Secret values are not displayed in Settings.
+
+On Windows, Claude account login also detects the Claude Code executable bundled with Claude Desktop, including Microsoft Store installations. AGY can renew expired credentials using the matching OAuth configuration in its installed Windows app; if that configuration is unavailable, sign in again in Antigravity.
 
 The active account cannot be deleted. Switch to another account first, then delete the saved profile.
 
@@ -180,8 +184,8 @@ Choose `펫 바꾸기` (Change pet) from the context menu to switch immediately.
 | Double-click | Jump and open the Limits page in Settings |
 | Drag | Move the window |
 | Finish dragging or resizing | Save the current position and size, then restore them within the current display on the next launch |
-| Right-click | Open the menu for Settings, accounts, pet selection, animations, movement pause, mouse following, auto-start, hiding, and more |
-| System tray | Open Settings, show or hide the pet, manage accounts and pets, or quit completely |
+| Right-click the pet or tray icon | Open the shared menu for remaining limits, taskbar visibility, Settings, accounts, pets, animations, movement, auto-start, and quitting |
+| Click the taskbar quota display or tray icon | Show remaining limits for signed-in services |
 | Click a completion, input-waiting, or approval-waiting bubble | Open the corresponding Codex chat |
 | Click any other bubble | Close it |
 

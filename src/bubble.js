@@ -108,7 +108,7 @@ function renderUsage(data) {
     bar.className = "bar";
     const fill = document.createElement("div");
     fill.className = fillClassFor(gaugeData.usedPercent);
-    fill.style.width = `${Math.min(100, Math.max(0, gaugeData.usedPercent))}%`;
+    fill.style.width = `${Math.round(100 - Math.min(100, Math.max(0, gaugeData.usedPercent)))}%`;
     bar.appendChild(fill);
 
     const reset = document.createElement("div");

@@ -189,7 +189,8 @@ function makeMessageEmoticon(folder, emoticon) {
   if (!file) return null;
   const image = document.createElement("img");
   image.className = "message-emoticon";
-  image.src = `./chat-icon/emoticons/${folder}/${encodeURIComponent(file)}`;
+  const assetFolder = emoticon.folder === "default" ? "default" : folder;
+  image.src = `./chat-icon/emoticons/${assetFolder}/${encodeURIComponent(file)}`;
   image.alt = emoticon.key || "이모티콘";
   image.title = emoticon.key || "";
   image.loading = "lazy";

@@ -13,8 +13,8 @@ const {
   extractEmoticons,
 } = require("../src/chat/chat-emoticons");
 
-test("매니페스트의 새 15개 이모티콘 키를 제공한다", () => {
-  assert.equal(EMOTICON_KEYS.length, 15);
+test("기본 세트의 32개 이모티콘 키를 제공한다", () => {
+  assert.equal(EMOTICON_KEYS.length, 32);
   assert.ok(EMOTICON_KEYS.includes("검토완료"));
   assert.ok(EMOTICON_KEYS.includes("몰루"));
   assert.ok(EMOTICON_KEYS.includes("우헤헤"));
@@ -61,11 +61,11 @@ test("본문 사이 이모티콘 위치를 글 조각과 분리해 보존한다"
   );
   assert.equal(result.text, "검토를 시작할게요.\n확인 결과 문제없어요.");
   assert.deepEqual(result.emoticons, [
-    { key: "내가볼게", file: "내가볼게.png" },
+    { key: "내가볼게", file: "10-inspecting.png", folder: "default" },
   ]);
   assert.deepEqual(result.parts, [
     { type: "text", text: "검토를 시작할게요." },
-    { type: "emoticon", key: "내가볼게", file: "내가볼게.png" },
+    { type: "emoticon", key: "내가볼게", file: "10-inspecting.png", folder: "default" },
     { type: "text", text: "확인 결과 문제없어요." },
   ]);
 });
@@ -87,7 +87,17 @@ test("허용되지 않은 키와 코드 속 표기는 이미지로 처리하지 
   assert.deepEqual(result.emoticons, []);
 });
 
-test("Grok은 실제 폴더에 있는 이모티콘만 안내하고 저장한다", () => {
+test("모든 서비스는 실제 default 폴더의 32개 이모티콘을 사용한다", () => {
+  const defaults = require("../src/chat-icon/emoticons/default-manifest.json");
+  const files = fs.readdirSync(path.join(__dirname, "..", "src", "chat-icon", "emoticons", "default")).filter((name) => name.endsWith(".png")).sort();
+  assert.deepEqual(Object.values(defaults).sort(), files);
+  for (const agent of ["codex", "agy", "claude", "grok"]) {
+    assert.deepEqual(availableEmoticonKeys(agent), EMOTICON_KEYS);
+    for (const key of EMOTICON_KEYS) {
+      const item = extractEmoticons(`[[CODEPET_EMOTE:${key}]]`, 1, agent).emoticons[0];
+      assert.equal(item.folder, "default"); assert.equal(item.file, defaults[key]);
+    }
+  }
   const keys = availableEmoticonKeys("grok");
   assert.ok(keys.length > 0);
 

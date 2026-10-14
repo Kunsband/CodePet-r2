@@ -31,6 +31,8 @@ test("AGY 한도는 남은 비율을 사용률로 바꾸고 잘못된 bucket은 
           buckets: [
             { displayName: "주간", remainingFraction: 0.25, resetTime: "soon" },
             { displayName: "누락" },
+            { displayName: "null", remainingFraction: null },
+            { displayName: "빈 값", remainingFraction: "" },
           ],
         },
       ],
@@ -44,6 +46,7 @@ test("Claude 한도는 전체 및 모델별 창을 표시하고 범위를 보정
     five_hour: { utilization: 50.4, resets_at: "a" },
     seven_day: { utilization: 120, resets_at: "b" },
     seven_day_sonnet: { utilization: 25, resets_at: "c" },
+    seven_day_opus: { utilization: null },
   });
   assert.deepEqual(gauges.map((item) => item.label), ["5시간", "7일", "7일 · Sonnet"]);
   assert.deepEqual(gauges.map((item) => item.usedPercent), [50, 100, 25]);

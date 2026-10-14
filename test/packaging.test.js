@@ -28,9 +28,11 @@ test("전역 실행 도우미(bin)가 선언되어 있고 존재한다", () => {
   assert.doesNotMatch(launcher, /auth|token|credential/i);
 });
 
-test("npm 팩 대상은 실행 파일 형식과 CLI 진입점만 허용한다", () => {
+test("npm 팩 대상은 실행 파일, CLI 진입점과 필수 라이선스 고지만 허용한다", () => {
   assert.deepEqual(packageJson.files, [
+    "THIRD_PARTY_NOTICES.md",
     "src/**/*.js",
+    "src/**/*.cs",
     "src/**/*.html",
     "src/**/*.css",
     "src/**/*.json",
@@ -53,6 +55,7 @@ test("electron-builder 설정이 유지된다 (portable/dmg/AppImage)", () => {
   assert.deepEqual(packageJson.build.linux.target, ["AppImage"]);
   assert.ok(packageJson.build.files.includes("src/**/*.js"));
   assert.ok(packageJson.build.files.includes("src/**/*.png"));
+  assert.ok(packageJson.build.files.includes("THIRD_PARTY_NOTICES.md"));
   assert.ok(packageJson.build.files.includes("!node_modules{,/**/*}"));
   assert.doesNotMatch(packageJson.build.files.join("\n"), /test|README|\.github|scripts/);
 });

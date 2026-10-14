@@ -64,7 +64,7 @@ test("에이전트 이모티콘 표기는 첫 번째 한 개만 본문과 분리
   const response = room.messages.find((message) => message.author === "codex");
   assert.equal(response.text, "검토 끝났습니다.");
   assert.deepEqual(response.emoticons, [
-    { key: "검토완료", file: "검토완료.png" },
+    { key: "검토완료", file: "25-reviewed.png", folder: "default" },
   ]);
   assert.deepEqual(response.contentParts.map((part) => part.type), [
     "text",
@@ -626,7 +626,7 @@ test("토론 종료 표기는 이모티콘 위치 데이터나 화면 본문에 
   assert.equal(response.text, "결론입니다.");
   assert.deepEqual(response.contentParts, [
     { type: "text", text: "결론입니다." },
-    { type: "emoticon", key: "검토완료", file: "검토완료.png" },
+    { type: "emoticon", key: "검토완료", file: "25-reviewed.png", folder: "default" },
   ]);
 });
 

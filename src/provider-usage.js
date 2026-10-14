@@ -3,6 +3,7 @@ const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
 const { createClaudeFileStore } = require("./claude-live-credentials");
+const { withAntigravityCredential } = require("./antigravity-auth");
 
 const CLAUDE_CLIENT_ID = "9d1c250a-e61b-44d9-88ed-5944d1962f5e";
 const cache = new Map();
@@ -45,10 +46,12 @@ function clearUsageCache(provider = null) {
 function normalizeAgyQuota(data) {
   return (data?.groups || []).flatMap((group) =>
     (group.buckets || []).flatMap((bucket) => {
-      const remaining = Number(bucket.remainingFraction ?? bucket.remaining_fraction);
+      const raw = bucket.remainingFraction ?? bucket.remaining_fraction;
+      if (raw == null || raw === "") return [];
+      const remaining = Number(raw);
       if (!Number.isFinite(remaining)) return [];
       return [{
-        label: [group.displayName || group.name, bucket.displayName || bucket.window]
+        label: [group.displayName || group.name, String(bucket.displayName || bucket.window || "").replace(/\s+Remaining$/i, "")]
           .filter(Boolean)
           .join(" · "),
         usedPercent: clampPercent((1 - remaining) * 100),
@@ -66,6 +69,7 @@ function normalizeClaudeUsage(data) {
     ["7일 · Opus", data?.seven_day_opus],
   ];
   return windows.flatMap(([label, value]) => {
+    if (value?.utilization == null || value.utilization === "") return [];
     const utilization = Number(value?.utilization);
     if (!Number.isFinite(utilization)) return [];
     return [{
@@ -214,14 +218,14 @@ function tierLabel(assist) {
   return tier?.displayName || tier?.display_name || tier?.name || tier?.id || null;
 }
 
-async function fetchAntigravityUsage({ credential, force = false } = {}) {
+async function fetchAntigravityUsage({ credential, force = false, credentialStore } = {}) {
   const token = credential?.token?.access_token;
   if (!token) throw new Error("AGY 로그인 정보가 없습니다.");
   const key = tokenKey("agy", credential?.token?.refresh_token || token);
 
-  return cached(key, async () => {
+  return cached(key, () => withAntigravityCredential(credential, async (accessToken) => {
     const headers = {
-      authorization: `Bearer ${token}`,
+      authorization: `Bearer ${accessToken}`,
       "content-type": "application/json",
       "user-agent": "antigravity/cli/1.0.11 windows/amd64",
     };
@@ -231,9 +235,10 @@ async function fetchAntigravityUsage({ credential, force = false } = {}) {
         headers,
         body: JSON.stringify({ metadata: { pluginType: "GEMINI" } }),
       }),
-      fetchAntigravityIdentity({ credential }).catch(() => ({})),
+      fetchAntigravityIdentity({ credential, credentialStore }).catch(() => ({})),
     ]);
-    const project = assist?.cloudaicompanionProject;
+    const projectValue = assist?.cloudaicompanionProject;
+    const project = typeof projectValue === "string" ? projectValue : projectValue?.id;
     if (!project) throw new Error("AGY 프로젝트 정보를 찾지 못했습니다.");
     const quota = await json(
       "https://daily-cloudcode-pa.googleapis.com/v1internal:retrieveUserQuotaSummary",
@@ -249,19 +254,19 @@ async function fetchAntigravityUsage({ credential, force = false } = {}) {
       plan: tierLabel(assist),
       gauges: normalizeAgyQuota(quota),
     };
-  }, { force });
+  }, { store: credentialStore }), { force });
 }
 
-async function fetchAntigravityIdentity({ credential, force = false } = {}) {
+async function fetchAntigravityIdentity({ credential, force = false, credentialStore } = {}) {
   const token = credential?.token?.access_token;
   if (!token) throw new Error("AGY 로그인 정보가 없습니다.");
   const key = tokenKey("agy:identity", credential?.token?.refresh_token || token);
-  return cached(key, async () => {
+  return cached(key, () => withAntigravityCredential(credential, async (accessToken) => {
     const identity = await json("https://www.googleapis.com/oauth2/v2/userinfo", {
-      headers: { authorization: `Bearer ${token}` },
+      headers: { authorization: `Bearer ${accessToken}` },
     });
     return { email: identity?.email || null };
-  }, { force });
+  }, { store: credentialStore }), { force });
 }
 
 module.exports = {

@@ -11,8 +11,44 @@ on:
 permissions:
   contents: write
 
+concurrency:
+  group: release-${{ github.repository }}
+  cancel-in-progress: false
+
+env:
+  GH_REPO: ${{ github.repository }}
+
 jobs:
+  metadata:
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.release.outputs.tag }}
+      publish: ${{ steps.release.outputs.publish }}
+    steps:
+      - uses: actions/checkout@v4
+      - id: release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        shell: bash
+        run: |
+          set -euo pipefail
+          tag="v$(node -p 'require("./package.json").version')"
+          if [[ "$GITHUB_REF" == refs/tags/* && "$GITHUB_REF_NAME" != "$tag" ]]; then
+            echo "Tag and package version do not match" >&2
+            exit 1
+          fi
+          echo "tag=$tag" >> "$GITHUB_OUTPUT"
+          if gh release view "$tag" --json isDraft --jq '.isDraft' > release-state.txt; then
+            echo "publish=$(cat release-state.txt)" >> "$GITHUB_OUTPUT"
+          else
+            # Distinguish a new version from authentication or network errors.
+            gh api "repos/$GITHUB_REPOSITORY/releases" --paginate --jq '.[].tag_name' > release-tags.txt
+            if grep -Fxq "$tag" release-tags.txt; then exit 1; fi
+            echo "publish=true" >> "$GITHUB_OUTPUT"
+          fi
+
   build:
+    needs: metadata
     strategy:
       fail-fast: false
       matrix:
@@ -103,19 +139,20 @@ jobs:
           compression-level: 0
           retention-days: 14
       - name: Upload the native package to a draft GitHub Release
-        if: startsWith(github.ref, 'refs/tags/v')
+        if: needs.metadata.outputs.publish == 'true'
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
         shell: bash
         run: |
-          if ! gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1; then
-            gh release create "${GITHUB_REF_NAME}" --draft --generate-notes || true
+          if ! gh release view "$RELEASE_TAG" >/dev/null 2>&1; then
+            gh release create "$RELEASE_TAG" --target "$GITHUB_SHA" --draft --generate-notes || true
           fi
           for attempt in 1 2 3 4 5; do
-            gh release view "${GITHUB_REF_NAME}" >/dev/null 2>&1 && break
+            gh release view "$RELEASE_TAG" >/dev/null 2>&1 && break
             sleep 2
           done
-          gh release upload "${GITHUB_REF_NAME}" ${{ matrix.file }} --clobber
+          gh release upload "$RELEASE_TAG" ${{ matrix.file }} --clobber
 
   collect:
     needs: build
@@ -146,8 +183,8 @@ jobs:
           retention-days: 14
 
   publish:
-    if: startsWith(github.ref, 'refs/tags/v')
-    needs: [build, collect]
+    if: needs.metadata.outputs.publish == 'true'
+    needs: [metadata, build, collect]
     runs-on: ubuntu-latest
     steps:
       - name: Download the complete release bundle
@@ -158,6 +195,7 @@ jobs:
       - name: Publish the complete three-platform GitHub Release
         env:
           GH_TOKEN: ${{ github.token }}
+          RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
         run: |
-          gh release upload "${GITHUB_REF_NAME}" artifacts/SHA256SUMS --clobber
-          gh release edit "${GITHUB_REF_NAME}" --draft=false
+          gh release upload "$RELEASE_TAG" artifacts/SHA256SUMS --clobber
+          gh release edit "$RELEASE_TAG" --draft=false

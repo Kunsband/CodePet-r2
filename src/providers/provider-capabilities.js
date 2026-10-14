@@ -3,6 +3,7 @@ const os = require("node:os");
 const path = require("node:path");
 const { execFile, spawn } = require("node:child_process");
 const { selectCommandPath, commandNeedsShell } = require("../command-resolution");
+const { claudeDesktopCandidates } = require("../claude-command");
 
 // 채팅과 펫 기능이 함께 쓰는 단일 프로바이더 탐지 모듈입니다.
 // - 후보 경로 → where/which 순서로 실행 파일을 찾고,
@@ -67,7 +68,7 @@ function probeCodexModelCatalog(commandPath, needsShell, timeoutMs = 8000) {
     child.stdin.write(`${JSON.stringify({
       id: 1,
       method: "initialize",
-      params: { clientInfo: { name: "code-pet", version: "1.0.3" }, capabilities: { experimentalApi: true } },
+      params: { clientInfo: { name: "code-pet", version: require("../../package.json").version }, capabilities: { experimentalApi: true } },
     })}\n`);
   });
 }
@@ -372,7 +373,11 @@ function createCapabilityService(options = {}) {
     for (const candidate of cliCandidates(def.id, platform, env, home)) {
       if (candidate && existsSafe(candidate)) return candidate;
     }
-    return whichCommand(def.command, { platform, runCommand });
+    const found = await whichCommand(def.command, { platform, runCommand });
+    if (found) return found;
+    return def.id === "claude"
+      ? claudeDesktopCandidates({ platform, env, home, fsApi })[0] || null
+      : null;
   }
 
   async function probeVersion(commandPath, needsShell) {

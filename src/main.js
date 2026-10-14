@@ -1,4 +1,4 @@
-const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, screen, shell, dialog } = require("electron");
+const { app, BrowserWindow, Menu, Tray, nativeImage, ipcMain, screen, shell, dialog, powerMonitor } = require("electron");
 const { spawn, spawnSync, execFile } = require("node:child_process");
 const fs = require("node:fs");
 const os = require("node:os");
@@ -46,6 +46,9 @@ const { normalizeFontFamily, normalizeFontSize } = require("./appearance-setting
 const { buildAccountSubmenu } = require("./account-submenu");
 const { rateWindowLabel } = require("./codex-usage-label");
 const { commandNeedsShell, selectCommandPath } = require("./command-resolution");
+const { claudeDesktopCandidates } = require("./claude-command");
+const { UsageMonitor } = require("./usage-monitor");
+const { createUsageWindows } = require("./usage-windows");
 const {
   cliCandidates,
   parseGrokAuthStatus,
@@ -485,6 +488,8 @@ let phaseTimer = null;
 let reactionTimer = null;
 let dragSession = null;
 let tray = null;
+let usageWindows = null;
+let usageMonitor = null;
 let isQuitting = false;
 let petHiddenToTray = false;
 let lastPetVisualRefreshMs = 0;
@@ -1573,6 +1578,10 @@ function claudeCommandCandidates() {
   ];
 }
 
+function resolveClaudeCommand() {
+  return resolveCommand("claude", claudeCommandCandidates()) || claudeDesktopCandidates()[0] || null;
+}
+
 function codexCommandCandidates() {
   if (process.platform === "win32") return [];
   return [
@@ -1670,7 +1679,7 @@ Write-Output "Stopped $($processes.Count) AGY process(es)."
 }
 
 function writeClaudeLoginScript() {
-  const claudeCommand = resolveCommand("claude", claudeCommandCandidates());
+  const claudeCommand = resolveClaudeCommand();
   if (!claudeCommand) throw new Error("Claude 명령을 찾지 못했습니다.");
 
   if (["darwin", "linux"].includes(process.platform)) {
@@ -1777,7 +1786,7 @@ function getGrokStatus() {
 
 function getClaudeAuthStatus() {
   return new Promise((resolve, reject) => {
-    const command = resolveCommand("claude", claudeCommandCandidates());
+    const command = resolveClaudeCommand();
     if (!command) {
       reject(new Error("Claude 명령을 찾지 못했습니다."));
       return;
@@ -2014,6 +2023,7 @@ async function switchCodexAccount(profileKey) {
   if (codexProxyActive) {
     try {
       const result = codexAccountSwitcher.switchToProfile(profileKey);
+      void usageMonitor?.invalidate();
       invalidateProxyAccountsCache();
       // WebSocket 인증은 handshake 시점에 고정됩니다. B 프로필과 계정 캐시를
       // 먼저 확정한 뒤 기존 터널만 끊어, Codex의 자동 재연결이 B로 handshake하게 합니다.
@@ -2045,6 +2055,7 @@ async function switchCodexAccount(profileKey) {
 
     try {
       const result = codexAccountSwitcher.switchToProfile(profileKey);
+      void usageMonitor?.invalidate();
       refreshTrayMenu();
 
       let launchText = "Codex Desktop App 재실행을 요청했습니다.";
@@ -2091,11 +2102,15 @@ function buildCodexAccountSubmenu() {
   });
 }
 
-// 시스템 트레이 메뉴는 창이 투명해져서 펫 우클릭 메뉴를 못 여는 상황에서도 접근할 수 있는 안전장치입니다.
-function buildTrayMenu() {
+// 펫 우클릭과 시스템 트레이가 같은 기능과 표시 상태를 공유합니다.
+function buildAppMenu() {
   const isPetVisible = Boolean(petWindow && !petWindow.isDestroyed() && petWindow.isVisible());
 
   return Menu.buildFromTemplate([
+    { label: "남은 한도 보기…", click: () => usageWindows?.togglePopup(tray?.getBounds()) },
+    { label: "작업표시줄에 표시", type: "checkbox", checked: readSettings().taskbarUsageVisible !== false,
+      click: () => usageWindows?.toggleBar() },
+    { type: "separator" },
     {
       label: "설정…",
       click: openSettingsWindow,
@@ -2138,6 +2153,16 @@ function buildTrayMenu() {
       checked: runtime.followMouse,
       click: toggleFollowMouse,
     },
+    {
+      label: "모션 실행",
+      submenu: buildManualMotionSubmenu(),
+    },
+    {
+      label: "로그인 시 자동 실행",
+      type: "checkbox",
+      checked: isAutoLaunchEnabled(),
+      click: toggleAutoLaunch,
+    },
     { type: "separator" },
     {
       label: "완전 종료",
@@ -2150,7 +2175,7 @@ function buildTrayMenu() {
 function refreshTrayMenu() {
   if (!tray) return;
   tray.setToolTip("CodePet");
-  tray.setContextMenu(buildTrayMenu());
+  tray.setContextMenu(buildAppMenu());
 }
 
 // 시스템 트레이를 생성합니다.
@@ -2159,7 +2184,7 @@ function createTray() {
   if (tray) return;
 
   tray = new Tray(createTrayIcon());
-  tray.on("click", showPetWindowFromTray);
+  tray.on("click", () => usageWindows?.togglePopup(tray.getBounds()));
   tray.on("double-click", showPetWindowFromTray);
   refreshTrayMenu();
 }
@@ -2190,6 +2215,7 @@ function showPetWindowFromTray() {
   petHiddenToTray = false;
   petWindow.showInactive();
   petWindow.moveTop();
+  usageWindows?.bringToFront();
   startMovementLoop({ resetPosition: false });
   resendCurrentPetState();
   refreshPetSprite({ force: true });
@@ -2258,54 +2284,7 @@ function buildManualMotionSubmenu() {
 // renderer가 우클릭을 감지하면 main process에서 네이티브 메뉴를 띄웁니다.
 function showContextMenu() {
   if (!petWindow || petWindow.isDestroyed()) return;
-
-  const template = [
-    { label: "설정…", click: openSettingsWindow },
-    { label: "에이전트 채팅방…", click: openChatWindow },
-    { type: "separator" },
-    { label: "계정", submenu: buildProviderAccountSubmenu() },
-    {
-      label: "펫 바꾸기",
-      submenu: buildPetSelectionSubmenu(),
-    },
-    { type: "separator" },
-    {
-      label: runtime.manualPaused ? "다시 시작" : "일시 정지",
-      click: toggleManualPause,
-    },
-    { type: "separator" },
-    {
-      label: "마우스 따라가기",
-      type: "checkbox",
-      checked: runtime.followMouse,
-      click: toggleFollowMouse,
-    },
-    { type: "separator" },
-    {
-      label: "모션 실행",
-      submenu: buildManualMotionSubmenu(),
-    },
-    { type: "separator" },
-    {
-      label: "Codex 재시작 없는 전환 (프록시)",
-      type: "checkbox",
-      checked: isCodexProxyModeEnabled(),
-      click: () => setCodexProxyMode(!isCodexProxyModeEnabled()),
-    },
-    {
-      label: "로그인 시 자동 실행",
-      type: "checkbox",
-      checked: isAutoLaunchEnabled(),
-      click: toggleAutoLaunch,
-    },
-    { type: "separator" },
-    {
-      label: "숨기기",
-      click: hidePetWindowToTray,
-    },
-  ];
-
-  Menu.buildFromTemplate(template).popup({ window: petWindow });
+  buildAppMenu().popup({ window: petWindow });
 }
 
 // 드래그 시작 시 자동 이동을 멈추고 기준 좌표를 저장합니다.
@@ -2416,6 +2395,7 @@ function recoverPetWindowVisuals({ forceSprite = false } = {}) {
     }
 
     petWindow.moveTop();
+    usageWindows?.bringToFront();
     resendCurrentPetState();
     refreshPetSprite({ force: forceSprite || !wasVisible });
     refreshTrayMenu();
@@ -2528,6 +2508,7 @@ function flushPendingBubbleData() {
         bubbleWindow.showInactive();
       }
       bubbleWindow.moveTop();
+      usageWindows?.bringToFront();
     } catch (error) {
       console.warn("[desktop-pet] Failed to show bubble fallback. Recreating.", error.message);
       recreateBubbleWindow("fallback-show-failed");
@@ -2698,15 +2679,13 @@ function buildUsageBubbleData(usage) {
   for (const window of rateLimits.windows || [rateLimits.primary, rateLimits.secondary]) {
     if (!window) continue;
 
-    // 기록 이후 초기화 시각이 이미 지났으면 실제 사용량은 0으로 리셋된 상태입니다.
-    // 오래된 used_percent를 그대로 보여주면 오해를 부르므로 초기화된 것으로 표시합니다.
     const resetAtSec = getResetAtSec(window);
-    const resetPassed = Number.isFinite(resetAtSec) && resetAtSec * 1000 <= Date.now();
-
+    const value = window.used_percent;
+    if (value == null || !Number.isFinite(Number(value))) continue;
     gauges.push({
       label: rateWindowLabel(window),
-      usedPercent: resetPassed ? 0 : Number(window.used_percent) || 0,
-      resetText: resetPassed ? "이미 초기화됨" : formatResetInfo(resetAtSec),
+      usedPercent: Math.max(0, Math.min(100, Number(value))),
+      resetText: formatResetInfo(resetAtSec),
     });
   }
 
@@ -3004,6 +2983,7 @@ async function switchProviderAccount(provider, profileKey) {
   if (!switcher) throw new Error("지원하지 않는 계정 유형입니다.");
   await switcher.switchToProfile(profileKey);
   clearUsageCache(provider);
+  void usageMonitor?.invalidate();
   refreshTrayMenu();
   return true;
 }
@@ -3025,6 +3005,7 @@ function deleteProviderAccount(provider, profileKey) {
   const deleted = switcher.deleteProfile(profileKey);
   if (provider === "codex") invalidateProxyAccountsCache();
   clearUsageCache(provider);
+  void usageMonitor?.invalidate();
   refreshTrayMenu();
   return deleted;
 }
@@ -3439,12 +3420,14 @@ function registerIpcHandlers() {
       try {
         bubbleWindow.showInactive();
         bubbleWindow.moveTop();
+        usageWindows?.bringToFront();
       } catch (error) {
         console.warn("[desktop-pet] Failed to show resized bubble. Recreating.", error.message);
         recreateBubbleWindow("resize-show-failed");
       }
     } else if (bubblePendingShow) {
       bubbleWindow.moveTop();
+      usageWindows?.bringToFront();
     }
   });
 
@@ -3605,14 +3588,34 @@ if (!relaunchingForX11) app.whenReady().then(() => {
   registerExternalWatcher(claudeWatcher, "Claude");
   registerExternalWatcher(grokWatcher, "Grok");
   createTray();
+  usageMonitor = new UsageMonitor([
+    { id: "codex", label: "Codex", load: async () => {
+      const before = codexAccountSwitcher.getCurrentAccountSummary();
+      const usage = await loadCodexUsage();
+      const current = codexAccountSwitcher.getCurrentAccountSummary();
+      if (before.accountId !== current.accountId || before.email !== current.email) {
+        return { usage: { gauges: [], error: "계정이 변경됐습니다. 새로고침해 주세요." }, accounts: [] };
+      }
+      return { usage, accounts: current.hasAuth ? [{ key: current.key || current.accountId || current.email || "current",
+        active: true, hasAuth: true, email: current.email, label: current.label, plan: current.planType }] : [] };
+    } },
+    { id: "agy", label: "AGY", load: loadAntigravityProvider },
+    { id: "claude", label: "Claude", load: loadClaudeProvider },
+    { id: "grok", label: "Grok", load: loadGrokProvider },
+  ]);
   createWindow();
   createBubbleWindow();
+  usageWindows = createUsageWindows({ electron: { BrowserWindow, ipcMain, screen, powerMonitor },
+    monitor: usageMonitor, readSettings, writeSettings, openSettings: openSettingsWindow,
+    onVisibilityChange: refreshTrayMenu,
+    getObstacles: () => [petWindow, bubbleWindow].filter((win) => win && !win.isDestroyed()).map((win) => win.getBounds()) });
   if (process.argv.includes("--settings")) {
     openSettingsWindow();
   }
   if (process.argv.includes("--chat")) {
     openChatWindow();
   }
+  if (process.argv.includes("--usage")) usageWindows.togglePopup();
   // 사용량 풍선은 수동 호출이라 문제가 없지만, 대화 말풍선은 watcher가 시작되지 않으면 절대 뜨지 않습니다.
   // 그래서 말풍선 renderer 로드 여부와 무관하게 감시를 바로 시작하고, 표시 데이터는 showBubble()에서 큐잉합니다.
   codexWatcher.start();
@@ -3631,6 +3634,7 @@ if (!relaunchingForX11) app.whenReady().then(() => {
 
 app.on("before-quit", () => {
   isQuitting = true;
+  usageWindows?.dispose();
   teardownCodexProxyOnQuit();
   chatFeature.shutdown();
 });
@@ -3703,6 +3707,7 @@ async function loadAntigravityProvider(forceUsage) {
   let credential;
   try {
     credential = await antigravityAccountSwitcher.read();
+    if (!credential?.token?.access_token) throw new Error("로그인 필요");
   } catch {
     return {
       accounts: antigravityAccountSwitcher.listProfiles(),
@@ -3730,13 +3735,14 @@ async function loadAntigravityProvider(forceUsage) {
       plan: data.plan,
     });
     usage = { id: "agy", label: "AGY", gauges: data.gauges };
-  } catch {
+  } catch (error) {
     try {
       await antigravityAccountSwitcher.snapshotCurrent();
     } catch {
       // 로그인 정보 자체가 없으면 저장할 프로필도 없습니다.
     }
-    usage = { id: "agy", label: "AGY", error: "조회 불가", gauges: [] };
+    usage = { id: "agy", label: "AGY", error: error.status === 401 || error.status === 400
+      ? "AGY 재로그인 필요" : "조회 불가", gauges: [] };
   }
   return { accounts: antigravityAccountSwitcher.listProfiles(), usage };
 }
