@@ -66,6 +66,8 @@ class ChatRoom extends EventEmitter {
     this.sessionId = options.sessionId || null;
     this.agents = options.agents || [];
     this.maxPromptMessages = options.maxPromptMessages;
+    this.loadPromptMessages = options.loadPromptMessages;
+    this.maxStoredMessages = options.maxStoredMessages || Infinity;
     // runAgent({agent, prompt, runId, attachments, emitEvent}) => { promise, cancel }
     this.runAgent = options.runAgent;
     this.prepareAgent = options.prepareAgent;
@@ -148,6 +150,9 @@ class ChatRoom extends EventEmitter {
   appendMessage(message) {
     const entry = { id: nextMessageId(), ts: Date.now(), ...message };
     this.messages.push(entry);
+    if (this.messages.length > this.maxStoredMessages) {
+      this.messages.splice(0, this.messages.length - this.maxStoredMessages);
+    }
     this.emit("message", entry);
     return entry;
   }
@@ -423,6 +428,7 @@ class ChatRoom extends EventEmitter {
   }
 
   promptMessages() {
+    if (typeof this.loadPromptMessages === "function") return this.loadPromptMessages();
     return this.messages.filter(
       (message) => message.authorType !== "system" && !message.error
     );

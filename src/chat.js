@@ -61,6 +61,14 @@ const approvalQueue = [];
 let activeApproval = null;
 const typingAgents = new Set();
 const liveRuns = new Map(); // runId → { item, textEl, statusEl, text }
+const historyLoadButton = document.getElementById("history-load");
+const displayedMessageIds = new Set();
+let historyBefore = null;
+let historyHasMore = false;
+let historyLoading = false;
+let historyEpoch = 0;
+let historyScrollTop = 0;
+let liveFrame = null;
 let mentionState = null;
 let noticeTimer = null;
 let turnState = { current: null, queue: [], deferred: [] };
@@ -1222,6 +1230,7 @@ function scrollToBottom(force = false) {
 function renderMessage(message) {
   const item = document.createElement("li");
   item.className = "message";
+  if (message.id) item.dataset.messageId = message.id;
 
   if (message.authorType === "system") {
     item.classList.add("is-system");
@@ -1379,6 +1388,7 @@ function renderMessage(message) {
 }
 
 function appendMessage(message) {
+  if (message.id && displayedMessageIds.has(message.id)) return;
   const stick = isNearBottom();
   // 같은 runId의 라이브 초안이 있으면 정식 메시지로 대체합니다.
   if (message.runId && liveRuns.has(message.runId)) {
@@ -1387,15 +1397,92 @@ function appendMessage(message) {
     liveRuns.delete(message.runId);
   }
   messageList.append(renderMessage(message));
+  if (message.id) displayedMessageIds.add(message.id);
   scrollToBottom(stick || message.authorType === "user");
 }
 
-function renderAllMessages(messages) {
+function renderAllMessages(messages, history = {}) {
+  historyEpoch += 1;
+  historyBefore = history.before ?? null;
+  historyHasMore = Boolean(history.hasMore);
+  historyLoading = false;
+  updateHistoryButton();
+  if (liveFrame !== null) cancelAnimationFrame(liveFrame);
+  liveFrame = null;
   messageList.textContent = "";
   liveRuns.clear();
+  displayedMessageIds.clear();
+  const fragment = document.createDocumentFragment();
   for (const message of messages || []) {
-    messageList.append(renderMessage(message));
+    if (message.id && displayedMessageIds.has(message.id)) continue;
+    fragment.append(renderMessage(message));
+    if (message.id) displayedMessageIds.add(message.id);
   }
+  messageList.append(fragment);
+}
+
+function updateHistoryButton(failed = false) {
+  historyLoadButton.hidden = !historyHasMore;
+  historyLoadButton.disabled = historyLoading;
+  historyLoadButton.textContent = historyLoading ? "불러오는 중…"
+    : failed ? "이전 대화 다시 불러오기" : "이전 대화 불러오기";
+}
+
+async function loadOlderMessages() {
+  if (historyLoading || !historyHasMore || !activeSessionId) return;
+  const epoch = historyEpoch;
+  const sessionId = activeSessionId;
+  historyLoading = true;
+  updateHistoryButton();
+  try {
+    const page = await window.chatApi.messagesHistory(sessionId, historyBefore);
+    if (epoch !== historyEpoch || sessionId !== activeSessionId) return;
+    if (!page?.ok) throw new Error(page?.error || "history unavailable");
+    // 요청 도중 새 메시지가 와도, 삽입 직전의 화면 위치를 기준으로 복원합니다.
+    const anchor = [...messageList.children].find((item) =>
+      item.getBoundingClientRect().bottom > chatScroll.getBoundingClientRect().top);
+    const top = anchor?.getBoundingClientRect().top;
+    const fragment = document.createDocumentFragment();
+    for (const message of page.messages || []) {
+      if (message.id && displayedMessageIds.has(message.id)) continue;
+      fragment.append(renderMessage(message));
+      if (message.id) displayedMessageIds.add(message.id);
+    }
+    messageList.prepend(fragment);
+    historyBefore = page.before;
+    historyHasMore = Boolean(page.hasMore);
+    historyLoading = false;
+    updateHistoryButton();
+    if (anchor) chatScroll.scrollTop += anchor.getBoundingClientRect().top - top;
+    historyScrollTop = chatScroll.scrollTop;
+  } catch {
+    if (epoch !== historyEpoch || sessionId !== activeSessionId) return;
+    historyLoading = false;
+    updateHistoryButton(true);
+  }
+}
+
+historyLoadButton.addEventListener("click", loadOlderMessages);
+chatScroll.addEventListener("scroll", () => {
+  const top = chatScroll.scrollTop;
+  const upward = top < historyScrollTop;
+  historyScrollTop = top;
+  if (upward && top < 160) void loadOlderMessages();
+}, { passive: true });
+
+function scheduleLiveUpdate() {
+  if (liveFrame !== null) return;
+  liveFrame = requestAnimationFrame(() => {
+    liveFrame = null;
+    const stick = isNearBottom();
+    for (const live of liveRuns.values()) {
+      if (!live.dirty) continue;
+      live.textEl.textContent = live.text;
+      live.statusEl.textContent = "";
+      live.dirty = false;
+    }
+    if (stick) scrollToBottom(true);
+  });
 }
 
 // --- 실시간 실행 이벤트 (스트리밍/상태) ---
@@ -1404,6 +1491,7 @@ function handleRunEvent(payload) {
   const { runId, agentId, kind } = payload;
 
   if (kind === "run-start") {
+    const stick = isNearBottom();
     const agent = agentById(agentId);
     const item = document.createElement("li");
     item.className = "message is-live";
@@ -1432,7 +1520,7 @@ function handleRunEvent(payload) {
     item.append(avatar, body);
     messageList.append(item);
     liveRuns.set(runId, { item, statusEl, textEl, text: "" });
-    scrollToBottom();
+    if (stick) scrollToBottom(true);
     return;
   }
 
@@ -1442,9 +1530,10 @@ function handleRunEvent(payload) {
     live.statusEl.textContent = payload.label || "";
   } else if (kind === "delta") {
     live.text += payload.text || "";
-    live.textEl.textContent = live.text;
-    live.statusEl.textContent = "";
-    scrollToBottom();
+    // 스트리밍 미리보기만 제한하며 최종 메시지는 별도로 온전하게 표시합니다.
+    if (live.text.length > 64 * 1024) live.text = `…\n${live.text.slice(-60 * 1024)}`;
+    live.dirty = true;
+    scheduleLiveUpdate();
   } else if (kind === "run-end") {
     // 정식 메시지가 곧 도착하므로 초안은 짧게 유지하되, 실패 시 즉시 제거합니다.
     if (!payload.ok) {
@@ -1877,8 +1966,9 @@ function applyFullState(full) {
     typingAgents.clear();
     for (const agentId of full.session.typing || []) typingAgents.add(agentId);
     pendingAttachments = full.session.pendingAttachments || [];
-    renderAllMessages(full.session.messages);
+    renderAllMessages(full.session.messages, full.session.history);
     scrollToBottom(true);
+    historyScrollTop = chatScroll.scrollTop;
   } else if (Object.hasOwn(full, "activeSessionId") && !full.activeSessionId) {
     turnState = normalizeTurnState(null);
   }

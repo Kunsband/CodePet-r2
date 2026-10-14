@@ -3,6 +3,7 @@ const { contextBridge, ipcRenderer, webUtils } = require("electron");
 // invoke 채널은 모두 { ok, ... } 형태로 응답합니다.
 const INVOKE = Object.freeze({
   STATE: "chat:state",
+  MESSAGES_HISTORY: "chat:messages:history",
   PROVIDERS_REFRESH: "chat:providers:refresh",
   OPEN_EXTERNAL: "chat:open-external",
   SESSIONS_CREATE: "chat:sessions:create",
@@ -39,6 +40,7 @@ function subscribe(channel, handler) {
 
 contextBridge.exposeInMainWorld("chatApi", {
   state: (input) => ipcRenderer.invoke(INVOKE.STATE, input),
+  messagesHistory: (sessionId, before) => ipcRenderer.invoke(INVOKE.MESSAGES_HISTORY, { sessionId, before }),
   providersRefresh: () => ipcRenderer.invoke(INVOKE.PROVIDERS_REFRESH),
   openExternal: (url) => ipcRenderer.invoke(INVOKE.OPEN_EXTERNAL, { url }),
 

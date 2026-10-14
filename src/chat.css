@@ -320,6 +320,24 @@ textarea:focus-visible {
   gap: 14px;
 }
 
+.history-load {
+  display: block;
+  margin: 0 auto 14px;
+  min-height: 32px;
+  padding: 4px 12px;
+  border: 0;
+  border-radius: 6px;
+  background: transparent;
+  color: var(--muted);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.history-load[hidden] { display: none; }
+.history-load:hover { background: var(--accent-soft); color: var(--ink); }
+.history-load:disabled { cursor: wait; }
+.history-load:focus-visible { outline: 2px solid var(--accent); outline-offset: 2px; }
+
 .message {
   display: flex;
   gap: 10px;

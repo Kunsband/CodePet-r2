@@ -9,9 +9,22 @@ const { buildRunDiagnostics, redactSensitiveText } = require("./chat-run-diagnos
 // 에이전트 작업은 며칠간 이어질 수도 있으므로 기본 실행 시간 제한을 두지 않습니다.
 // timeoutMs는 테스트나 명시적인 호출자가 양수를 전달한 경우에만 적용됩니다.
 const DEFAULT_TIMEOUT_MS = null;
-const DEFAULT_MAX_OUTPUT_BYTES = 2 * 1024 * 1024; // stdout 누적 상한
+// 정상적인 장기 실행은 누적 로그량으로 종료하지 않습니다.
+// 명시적인 호출자 상한(Docker 변경 manifest 등)은 계속 적용합니다.
+const DEFAULT_MAX_OUTPUT_BYTES = null;
+const MAX_CAPTURE_CHARS = 2 * 1024 * 1024;
+const MAX_LINE_BYTES = 8 * 1024 * 1024;
 const MAX_STDERR_BYTES = 256 * 1024;
 const MAX_ARGV_PROMPT_CHARS = 24 * 1024;
+
+function textTail(previous, text, limit = MAX_CAPTURE_CHARS) {
+  const combined = previous + text;
+  if (combined.length <= limit) return combined;
+  const marker = "[앞부분 출력 생략]\n";
+  let tail = combined.slice(-(limit - marker.length));
+  if (/^[\uDC00-\uDFFF]/.test(tail)) tail = tail.slice(1);
+  return marker + tail;
+}
 function createPromptFile(prompt, directory = os.tmpdir()) {
   fs.mkdirSync(directory, { recursive: true, mode: 0o700 });
   for (let attempt = 0; attempt < 8; attempt += 1) {
@@ -128,6 +141,7 @@ function runAgentProcess({
   parseLine = null,
   onEvent = null,
   maxOutputBytes = DEFAULT_MAX_OUTPUT_BYTES,
+  maxLineBytes = MAX_LINE_BYTES,
   promptTransport = "stdin",
   promptFileFlag = "--prompt-file",
   promptFileDirectory = os.tmpdir(),
@@ -219,7 +233,8 @@ function runAgentProcess({
     let stdout = "";
     let stderr = "";
     let stdoutBytes = 0;
-    let lineBuffer = "";
+    let lineParts = [];
+    let lineBytes = 0;
     let parsedFinal = null;
     let parsedError = null;
     let parsedApproval = null;
@@ -240,9 +255,9 @@ function runAgentProcess({
       // turn.failed 원인이 사용자에게 더 유용하므로 최신 오류를 보존합니다.
       if (event.kind === "error") parsedError = event.message;
       if (event.kind === "approval-required" && !parsedApproval) parsedApproval = event;
-      if (event.kind === "delta") deltaText += event.text;
+      if (event.kind === "delta") deltaText = textTail(deltaText, event.text);
       if (event.kind === "fallback") {
-        fallbackText += `${fallbackText ? "\n" : ""}${String(event.text || "")}`;
+        fallbackText = textTail(fallbackText, `${fallbackText ? "\n" : ""}${String(event.text || "")}`);
         return;
       }
       if (typeof onEvent === "function") {
@@ -253,35 +268,57 @@ function runAgentProcess({
     };
 
     const handleLines = (chunk, flush = false) => {
-      if (!parseLine) return;
-      lineBuffer += chunk;
-      const lines = lineBuffer.split(/\r?\n/);
-      lineBuffer = flush ? "" : lines.pop() || "";
-      for (const line of lines) {
-        emit(parseLine(line));
+      if (!parseLine || settled) return;
+      let start = 0;
+      while (start < chunk.length || (flush && lineParts.length)) {
+        const end = chunk.indexOf("\n", start);
+        const part = chunk.slice(start, end < 0 ? undefined : end);
+        lineBytes += Buffer.byteLength(part, "utf8");
+        if (lineBytes > maxLineBytes) {
+          cancelled = true;
+          terminate();
+          finish({ ok: false, error: "단일 실행 이벤트가 너무 큽니다. 파일·도구 출력을 나눠서 다시 시도해 주세요." });
+          return;
+        }
+        lineParts.push(part);
+        if (end < 0 && !flush) break;
+        const line = lineParts.join("").replace(/\r$/, "");
+        lineParts = [];
+        lineBytes = 0;
+        try {
+          emit(parseLine(line));
+        } catch (error) {
+          cancelled = true;
+          terminate();
+          finish({ ok: false, error: `실행 이벤트 처리 실패: ${redactSensitiveText(error.message)}` });
+          return;
+        }
+        if (end < 0) break;
+        start = end + 1;
       }
-      if (flush && lines.length === 0 && chunk) emit(parseLine(chunk));
     };
 
     child.stdout.on("data", (chunk) => {
+      if (settled) return;
       const text = stdoutDecoder.write(chunk);
       stdoutBytes += chunk.length;
-      if (stdoutBytes > maxOutputBytes) {
+      if (Number.isFinite(maxOutputBytes) && maxOutputBytes > 0 && stdoutBytes > maxOutputBytes) {
         cancelled = true;
         terminate();
         finish({ ok: false, error: "출력이 너무 길어 실행을 중단했습니다." });
         return;
       }
-      stdout += text;
+      if (!parseLine) stdout = textTail(stdout, text);
       handleLines(text);
     });
     child.stderr.on("data", (chunk) => {
-      if (stderr.length < MAX_STDERR_BYTES) stderr += stderrDecoder.write(chunk);
+      if (!settled) stderr = textTail(stderr, stderrDecoder.write(chunk), MAX_STDERR_BYTES);
     });
     child.on("error", (error) => {
       finish({ ok: false, error: `실행 실패: ${error.message}` });
     });
     child.on("close", (code) => {
+      if (settled) return;
       if (cancelled) {
         finish({ ok: false, error: "중지됨", cancelled: true });
         return;
@@ -289,11 +326,12 @@ function runAgentProcess({
       const stdoutTail = stdoutDecoder.end();
       const stderrTail = stderrDecoder.end();
       if (stdoutTail) {
-        stdout += stdoutTail;
+        if (!parseLine) stdout = textTail(stdout, stdoutTail);
         handleLines(stdoutTail);
       }
-      if (stderrTail && stderr.length < MAX_STDERR_BYTES) stderr += stderrTail;
-      if (lineBuffer) handleLines("", true);
+      if (stderrTail) stderr = textTail(stderr, stderrTail, MAX_STDERR_BYTES);
+      if (lineParts.length) handleLines("", true);
+      if (settled) return;
 
       let text = "";
       if (outputFile) {

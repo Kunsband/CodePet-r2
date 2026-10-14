@@ -12,6 +12,7 @@ const { ChatRoom, DEFAULT_DISCUSSION_RUN_BUDGET } = require("./chat-room");
 const { buildAgentInvocation, PERMISSION_MODES, INLINE_TEXT_LIMIT } = require("./chat-argv");
 const { createLineParser } = require("./chat-events");
 const { runAgentProcess } = require("./chat-agent-runner");
+const { DEFAULT_MAX_MESSAGES } = require("./chat-prompt");
 const { GrokDockerRuntime } = require("../grok-docker-runtime");
 const {
   importAttachment,
@@ -190,13 +191,18 @@ function createChatFeature(options) {
   function findAttachmentRecord(sessionId, attachmentId) {
     const pending = pendingFor(sessionId).get(attachmentId);
     if (pending) return pending;
-    const room = rooms.get(sessionId);
-    const messages = room ? room.messages : ensureStore() ? store.readMessages(sessionId) : [];
-    for (const message of messages) {
-      for (const attachment of message.attachments || []) {
-        if (attachment.id === attachmentId) return attachment;
+    if (!ensureStore()) return null;
+    let before = null;
+    do {
+      const page = store.readMessagesPage(sessionId, { before });
+      for (const message of page.messages) {
+        for (const attachment of message.attachments || []) {
+          if (attachment.id === attachmentId) return attachment;
+        }
       }
-    }
+      if (!page.hasMore) break;
+      before = page.before;
+    } while (before !== null);
     return null;
   }
 
@@ -320,13 +326,20 @@ function createChatFeature(options) {
   function getRoom(sessionId) {
     if (rooms.has(sessionId)) return rooms.get(sessionId);
     if (!ensureStore()) return null;
-    const session = store.getSession(sessionId);
-    if (!session) return null;
+    const meta = store.readMeta(sessionId);
+    if (!meta) return null;
 
     const room = new ChatRoom({
       sessionId,
-      agents: buildRoomAgents(session.meta),
-      initialMessages: session.messages,
+      agents: buildRoomAgents(meta),
+      initialMessages: store.readMessagesPage(sessionId).messages,
+      maxStoredMessages: 100,
+      // 화면의 페이지와 모델의 최근 대화 문맥은 독립적으로 유지합니다.
+      loadPromptMessages: () => store.readMessagesPage(sessionId, {
+        limit: DEFAULT_MAX_MESSAGES,
+        maxBytes: Infinity,
+        filter: (message) => message.authorType !== "system" && !message.error,
+      }).messages,
       runAgent: makeRunAgent(sessionId),
       prepareAgent: async (payload) => {
         const latestMeta = store?.readMeta(sessionId);
@@ -335,7 +348,7 @@ function createChatFeature(options) {
         }
         if (typeof options.prepareAgent === "function") await options.prepareAgent(payload);
       },
-      meta: { permissionMode: session.meta.permissionMode || "chat" },
+      meta: { permissionMode: meta.permissionMode || "chat" },
     });
 
     room.on("message", (message) => {
@@ -375,16 +388,25 @@ function createChatFeature(options) {
     const room = getRoom(sessionId);
     const meta = store?.readMeta(sessionId);
     if (!room || !meta) return null;
+    const page = publicMessagePage(store.readMessagesPage(sessionId));
     return {
       meta: publicMeta(meta),
       agents: room.publicAgents(),
-      messages: room.messages.map((message) => ({
-        ...message,
-        attachments: (message.attachments || []).map(publicAttachment),
-      })),
+      messages: page.messages,
+      history: { before: page.before, hasMore: page.hasMore },
       typing: room.state().typing,
       turnState: room.turnState(),
       pendingAttachments: [...pendingFor(sessionId).values()].map(publicAttachment),
+    };
+  }
+
+  function publicMessagePage(page) {
+    return {
+      ...page,
+      messages: page.messages.map((message) => ({
+        ...message,
+        attachments: (message.attachments || []).map(publicAttachment),
+      })),
     };
   }
 
@@ -428,6 +450,11 @@ function createChatFeature(options) {
 
   function registerIpcHandlers() {
     ipcMain.handle("chat:state", wrap(async (input) => fullState(input)));
+
+    ipcMain.handle("chat:messages:history", wrap(async ({ sessionId, before }) => {
+      requireSession(sessionId);
+      return publicMessagePage(store.readMessagesPage(sessionId, { before }));
+    }));
 
     ipcMain.handle(
       "chat:providers:refresh",

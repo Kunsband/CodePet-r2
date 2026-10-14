@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { readMessagePage } = require("./chat-history");
 
 // .code-pet 저장소 스키마 버전. 더 새로운 버전이 만든 데이터를 만나면
 // 데이터를 깨뜨리지 않도록 읽기 전용으로 동작합니다.
@@ -364,6 +365,10 @@ class ChatStore {
     return this.readTranscript(id)
       .filter((event) => event && event.kind === "message" && event.message)
       .map((event) => event.message);
+  }
+
+  readMessagesPage(id, options) {
+    return readMessagePage(this.transcriptPath(id), options);
   }
 
   getSession(id) {

@@ -116,6 +116,40 @@ test("출력 상한을 넘으면 프로세스를 종료하고 오류를 반환�
   assert.ok(result.error.includes("출력이 너무 길어"));
 });
 
+test("누적 JSON 로그가 2MiB를 넘어도 최종 답변을 보존하고 실행을 완료한다", async () => {
+  const result = await runNode([
+    "for(let i=0;i<80;i++) console.log(JSON.stringify({kind:'ignored',text:'x'.repeat(65536)}))",
+    "process.stdout.write(JSON.stringify({kind:'final',text:'최종 답변 보존'}))",
+  ].join(";"), {
+    parseLine: (line) => { const event = JSON.parse(line); return event.kind === 'final' ? event : null; },
+  }).promise;
+  assert.equal(result.ok, true);
+  assert.equal(result.text, "최종 답변 보존");
+});
+
+test("일반 출력은 오래된 미리보기만 생략하며 종료하지 않는다", async () => {
+  const result = await runNode("process.stdout.write('x'.repeat(3*1024*1024)+'최종 끝')").promise;
+  assert.equal(result.ok, true);
+  assert.ok(result.text.startsWith("[앞부분 출력 생략]"));
+  assert.ok(result.text.endsWith("최종 끝"));
+  assert.ok(result.text.length <= 2 * 1024 * 1024);
+});
+
+test("개행 없는 비정상 단일 이벤트는 메모리를 무한히 늘리지 않는다", async () => {
+  const result = await runNode("process.stdout.write('x'.repeat(100000))", {
+    parseLine: JSON.parse,
+    maxLineBytes: 4096,
+  }).promise;
+  assert.equal(result.ok, false);
+  assert.match(result.error, /단일 실행 이벤트/);
+});
+
+test("큰 stderr에서도 마지막 실제 실패 원인을 보존한다", async () => {
+  const result = await runNode("process.stderr.write('x'.repeat(300000)+'\\n마지막 실패 원인');process.exitCode=1").promise;
+  assert.equal(result.ok, false);
+  assert.ok(result.error.endsWith("마지막 실패 원인"));
+});
+
 test("cancel은 cancelled 플래그로 끝난다", async () => {
   const run = runNode("setTimeout(()=>{}, 60000)");
   setTimeout(() => run.cancel(), 150);
