@@ -55,6 +55,22 @@ test("ordinary answers run once and trace disk failures do not fail the answer",
   assert.equal(result.text, "answer");
 });
 
+test("trace continuations retain completed work so the agent can avoid repeating edits", async () => {
+  const prompts = [];
+  const result = await runWithTraceAccess({
+    traceStore: { list: async () => [], read: async () => ({ events: [] }), save: async () => {} },
+    sessionId: "s1", agentId: "codex", prompt: "Finish the task",
+    startRun({ prompt, onTrace }) {
+      prompts.push(prompt);
+      if (prompts.length === 1) onTrace({ kind: "file-change", changes: [{ path: "already-edited.js", kind: "update" }] });
+      return { promise: Promise.resolve({ ok: true, text: prompts.length === 1 ? REQUEST : "done" }), cancel() {} };
+    },
+  }).promise;
+  assert.equal(result.text, "done");
+  assert.match(prompts[1], /already-edited\.js/);
+  assert.match(prompts[1], /완료한 명령이나 수정을 반복하지 말고/);
+});
+
 test("repeated trace requests are bounded and never leak control text into the final answer", async () => {
   let reads = 0;
   let starts = 0;
