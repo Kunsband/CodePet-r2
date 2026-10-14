@@ -1,6 +1,6 @@
 # Release notes / 릴리즈 노트
 
-## Unreleased / 미배포
+## 1.0.6 — 2026-10-14
 
 ### English
 
