@@ -5,6 +5,7 @@
 // - 모델/노력 문자열은 허용 문자만 통과시켜 .cmd 셸 경유 시 주입을 차단합니다.
 
 const PERMISSION_MODES = Object.freeze(["chat", "workspace-read", "workspace-write"]);
+const { selectionError } = require("../providers/provider-model-catalog");
 const INLINE_TEXT_LIMIT = 16 * 1024;
 
 const SAFE_OPTION_PATTERN = /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$/;
@@ -302,7 +303,9 @@ function buildAgentInvocation(input = {}) {
   const normalizedModel = normalizeChoice(model);
   if (normalizedModel === undefined) return { ok: false, error: "모델 이름 형식이 올바르지 않습니다." };
   const normalizedEffort = normalizeChoice(effort);
-  if (normalizedEffort === undefined) return { ok: false, error: "속도/노력 값 형식이 올바르지 않습니다." };
+  if (normalizedEffort === undefined) return { ok: false, error: "추론 값 형식이 올바르지 않습니다." };
+  const invalidSelection = selectionError(provider, normalizedModel, normalizedEffort);
+  if (invalidSelection) return { ok: false, error: invalidSelection };
 
   const deliveries = buildDeliveries({
     providerId: provider.id,

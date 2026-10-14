@@ -4,6 +4,8 @@ const path = require("node:path");
 const { execFile, spawn } = require("node:child_process");
 const { selectCommandPath, commandNeedsShell } = require("../command-resolution");
 const { claudeDesktopCandidates } = require("../claude-command");
+const { CATALOG_ERROR, normalizeCatalog, parseAgyModels, parseGrokCatalog,
+  probeClaudeModelCatalog } = require("./provider-model-catalog");
 
 // 채팅과 펫 기능이 함께 쓰는 단일 프로바이더 탐지 모듈입니다.
 // - 후보 경로 → where/which 순서로 실행 파일을 찾고,
@@ -12,12 +14,14 @@ const { claudeDesktopCandidates } = require("../claude-command");
 
 const PROBE_TIMEOUT_MS = 5000;
 const MODEL_PROBE_TIMEOUT_MS = 15000;
+const DISCOVERY_TTL_MS = 60 * 1000;
 
 function probeCodexModelCatalog(commandPath, needsShell, timeoutMs = 8000) {
   return new Promise((resolve) => {
     let child;
     let settled = false;
     let buffer = "";
+    let bytes = 0;
     const finish = (value) => {
       if (settled) return;
       settled = true;
@@ -40,6 +44,8 @@ function probeCodexModelCatalog(commandPath, needsShell, timeoutMs = 8000) {
     child.on("error", () => finish(null));
     child.on("close", () => finish(null));
     child.stdout.on("data", (chunk) => {
+      bytes += chunk.length;
+      if (bytes > 1024 * 1024) { finish(null); return; }
       buffer += String(chunk);
       const lines = buffer.split(/\r?\n/);
       buffer = lines.pop() || "";
@@ -51,13 +57,13 @@ function probeCodexModelCatalog(commandPath, needsShell, timeoutMs = 8000) {
         }
         if (message.id === 2 && Array.isArray(message.result?.data)) {
           const modelOptions = message.result.data
-            .filter((item) => !item.hidden && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$/.test(item.model))
+            .filter((item) => item && !item.hidden && typeof item.model === "string" && /^[A-Za-z0-9][A-Za-z0-9._:/-]{0,63}$/.test(item.model))
             .map((item) => ({
               id: item.model,
               label: item.displayName || item.model,
               isDefault: Boolean(item.isDefault),
-              efforts: (item.supportedReasoningEfforts || [])
-                .map((entry) => entry.reasoningEffort)
+              efforts: (Array.isArray(item.supportedReasoningEfforts) ? item.supportedReasoningEfforts : [])
+                .map((entry) => entry?.reasoningEffort)
                 .filter((effort) => /^[A-Za-z0-9._-]+$/.test(effort)),
             }));
           finish(modelOptions.length > 0 ? modelOptions : null);
@@ -78,35 +84,35 @@ function probeAgyModelCatalog(commandPath, needsShell, timeoutMs = MODEL_PROBE_T
     let child;
     let settled = false;
     let output = "";
+    let stderr = "";
     let quietTimer = null;
-    const finish = () => {
+    const finish = (ok = true) => {
       if (settled) return;
       settled = true;
       clearTimeout(hardTimer);
       if (quietTimer) clearTimeout(quietTimer);
       try { child?.kill(); } catch {}
-      const models = output
-        .split(/\r?\n/)
-        .map((line) => line.trim())
-        .filter((line) => /^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$/.test(line));
-      resolve(models.length > 0 ? ["default", ...models] : null);
+      const models = ok ? parseAgyModels(output) : [];
+      resolve({ models, authenticationRequired: /(?:please sign in|not authenticated|authentication required|log in to)/i.test(stderr) });
     };
-    const hardTimer = setTimeout(finish, timeoutMs);
+    const hardTimer = setTimeout(() => finish(false), timeoutMs);
     if (typeof hardTimer.unref === "function") hardTimer.unref();
     try {
       child = spawn(needsShell ? `"${commandPath}"` : commandPath, ["models"], {
         shell: Boolean(needsShell),
         windowsHide: true,
-        stdio: ["ignore", "pipe", "ignore"],
+        stdio: ["ignore", "pipe", "pipe"],
       });
     } catch {
-      finish();
+      finish(false);
       return;
     }
-    child.on("error", finish);
-    child.on("close", finish);
+    child.on("error", () => finish(false));
+    child.on("close", (code) => finish(code === 0));
+    child.stderr.on("data", (chunk) => { stderr = (stderr + String(chunk)).slice(-8192); });
     child.stdout.on("data", (chunk) => {
       output += String(chunk);
+      if (Buffer.byteLength(output) > 1024 * 1024) { output = ""; finish(false); return; }
       if (quietTimer) clearTimeout(quietTimer);
       // agy 1.1.10은 목록을 모두 출력한 뒤에도 파이프를 오래 열어두는
       // 경우가 있어, 마지막 출력 후 짧은 정적 구간을 완료로 봅니다.
@@ -123,22 +129,11 @@ function parseGrokAuthStatus(output) {
 }
 
 function parseGrokModels(output) {
-  const models = [];
-  const seen = new Set();
-  for (const line of String(output || "").split(/\r?\n/)) {
-    const match = line.match(
-      /^\s*\*\s+([A-Za-z0-9][A-Za-z0-9._:/-]{0,63})(?:\s+\(default\))?\s*$/i
-    );
-    if (!match || seen.has(match[1])) continue;
-    seen.add(match[1]);
-    models.push(match[1]);
-  }
-  return models.length > 0 ? ["default", ...models] : null;
+  const models = parseGrokCatalog(output).map((row) => row.id);
+  return models.length ? models : null;
 }
 
-// 모델/노력 옵션은 설치된 CLI --help에서 검증된 플래그에만 연결됩니다.
-// (claude 2.1.x: --model fable|opus|sonnet, --effort low..max /
-//  codex 0.146: -m/--model, -c model_reasoning_effort=...)
+// Model IDs and effort choices come exclusively from the installed CLI.
 const PROVIDER_DEFS = Object.freeze([
   Object.freeze({
     id: "claude",
@@ -150,9 +145,8 @@ const PROVIDER_DEFS = Object.freeze([
     installUrl: "https://claude.com/claude-code",
     authProbeArgs: Object.freeze(["auth", "status"]),
     loginCommand: "claude auth login",
-    models: Object.freeze(["default", "fable", "opus", "sonnet"]),
-    modelsFromHelp: true,
-    efforts: Object.freeze(["default", "low", "medium", "high", "xhigh", "max"]),
+    models: Object.freeze([]),
+    efforts: Object.freeze([]),
     allowCustomModel: false,
     supportsImages: "workspace-read-required",
     streaming: "stream-json",
@@ -172,9 +166,8 @@ const PROVIDER_DEFS = Object.freeze([
     installUrl: "https://developers.openai.com/codex/cli",
     authProbeArgs: Object.freeze(["login", "status"]),
     loginCommand: "codex login",
-    // 모델 이름 목록은 CLI에서 열람할 수 없어 기본값 + 직접 입력만 제공합니다.
-    models: Object.freeze(["default"]),
-    efforts: Object.freeze(["default", "minimal", "low", "medium", "high", "xhigh"]),
+    models: Object.freeze([]),
+    efforts: Object.freeze([]),
     allowCustomModel: false,
     modelCatalogProbe: "codex-app-server",
     supportsImages: "native",
@@ -195,27 +188,12 @@ const PROVIDER_DEFS = Object.freeze([
     installUrl: "https://antigravity.google/docs/cli/install",
     guiOnlyHint:
       "Antigravity IDE는 설치되어 있지만 agy CLI가 없습니다. https://antigravity.google/docs/cli/install 참고",
-    // agy 1.1.10 --help에서 검증된 플래그: -p/--print, --model, --effort low|medium|high,
-    // --mode accept-edits|plan, --sandbox, --disable-slash-commands, --add-dir.
-    // 모델 목록은 발견 시 `agy models`로 갱신되며, 아래는 그 폴백입니다.
-    models: Object.freeze([
-      "default",
-      "gemini-3.6-flash-high",
-      "gemini-3.6-flash-medium",
-      "gemini-3.6-flash-low",
-      "gemini-3.1-pro-high",
-      "gemini-3.1-pro-low",
-      "claude-sonnet-4-6",
-      "claude-opus-4-6-thinking",
-      "gpt-oss-120b-medium",
-    ]),
-    efforts: Object.freeze(["default", "low", "medium", "high"]),
+    models: Object.freeze([]),
+    efforts: Object.freeze([]),
     allowCustomModel: false,
     modelsProbeArgs: Object.freeze(["models"]),
     supportsImages: "unsupported",
-    // --output-format stream-json 플래그는 존재하지만 이 기기에서 이벤트 형식을
-    // 스모크 검증하지 못해, 안정성이 확인된 일반 텍스트 출력을 사용합니다.
-    streaming: "text",
+    streaming: "stream-json",
     permissions: Object.freeze({
       chat: Object.freeze({ supported: true, enforcement: "sandbox" }),
       "workspace-read": Object.freeze({ supported: true, enforcement: "sandbox" }),
@@ -232,9 +210,8 @@ const PROVIDER_DEFS = Object.freeze([
     installUrl: "https://x.ai/cli",
     authProbeArgs: Object.freeze(["models"]),
     loginCommand: "grok login",
-    models: Object.freeze(["default", "grok-4.5"]),
-    // Grok Build 1.0.0의 실제 --effort 허용값입니다.
-    efforts: Object.freeze(["default", "low", "medium", "high"]),
+    models: Object.freeze([]),
+    efforts: Object.freeze([]),
     allowCustomModel: false,
     modelsProbeArgs: Object.freeze(["models"]),
     supportsImages: "unsupported",
@@ -345,12 +322,15 @@ function createCapabilityService(options = {}) {
     (options.runCommand ? null : probeCodexModelCatalog);
   const agyModelProbe = options.agyModelProbe ||
     (options.runCommand ? null : probeAgyModelCatalog);
+  const claudeModelProbe = options.claudeModelProbe ||
+    (options.runCommand ? null : probeClaudeModelCatalog);
   const grokDockerProbe = options.grokDockerProbe || null;
   // cache: { get(): object|null, set(object): void } — 저장 위치는 호출자가 결정합니다.
   const cache = options.cache || { get: () => null, set: () => {} };
 
   let records = null;
   let discovering = null;
+  let discoveredAt = 0;
 
   function statSafe(file) {
     try {
@@ -437,33 +417,25 @@ function createCapabilityService(options = {}) {
     return { authStatus: "authenticated", authReason: "" };
   }
 
-  // 모델 목록을 CLI 스스로 보고할 수 있는 경우(`agy models`) 프로브로 갱신합니다.
+  // Never substitute bundled models or a previous account's cached catalog.
   async function probeModels(def, commandPath, needsShell) {
-    if (def.modelsFromHelp) {
-      const result = await runCommand(commandPath, ["--help"], {
-        timeoutMs: MODEL_PROBE_TIMEOUT_MS,
-        shell: needsShell,
-      });
-      if (!result.ok) return null;
-      const modelSection = String(result.stdout || "").match(/--model[\s\S]{0,500}?(?=\n\s{2}--|\n\s{2}-[a-z])/i)?.[0] || "";
-      const models = [...modelSection.matchAll(/'([A-Za-z0-9][A-Za-z0-9._:/-]{1,63})'/g)]
-        .map((match) => match[1]);
-      return models.length > 0 ? ["default", ...new Set(models)] : null;
-    }
+    if (def.id === "claude") return claudeModelProbe ? claudeModelProbe(commandPath, needsShell) : null;
+    if (def.id === "codex") return codexModelProbe ? codexModelProbe(commandPath, needsShell) : null;
+    if (def.id === "agy" && agyModelProbe) return agyModelProbe(commandPath, needsShell);
     if (!def.modelsProbeArgs) return null;
     const result = await runCommand(commandPath, [...def.modelsProbeArgs], {
       timeoutMs: MODEL_PROBE_TIMEOUT_MS,
       shell: needsShell,
     });
+    if (def.id === "agy") return {
+      models: result.ok ? parseAgyModels(result.stdout) : [],
+      authenticationRequired: /(?:please sign in|not authenticated|authentication required|log in to)/i.test(result.stderr || ""),
+    };
     if (!result.ok) return null;
     if (def.id === "grok") {
-      return parseGrokModels(`${result.stdout || ""}\n${result.stderr || ""}`);
+      return parseGrokCatalog(`${result.stdout || ""}\n${result.stderr || ""}`);
     }
-    const models = String(result.stdout || "")
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .filter((line) => /^[A-Za-z0-9][A-Za-z0-9._-]{1,63}$/.test(line));
-    return models.length > 0 ? ["default", ...models] : null;
+    return parseAgyModels(result.stdout);
   }
 
   async function discoverOne(def, persistedCache) {
@@ -477,9 +449,11 @@ function createCapabilityService(options = {}) {
       commandPath: null,
       needsShell: false,
       version: null,
-      models: [...def.models],
-      modelOptions: def.models.map((model) => ({ id: model, label: model, efforts: [...def.efforts] })),
-      efforts: [...def.efforts],
+      models: [],
+      modelOptions: [],
+      efforts: [],
+      catalogStatus: "unavailable",
+      catalogReason: CATALOG_ERROR,
       allowCustomModel: def.allowCustomModel,
       supportsImages: def.supportsImages,
       streaming: def.streaming,
@@ -527,30 +501,14 @@ function createCapabilityService(options = {}) {
     const stat = statSafe(commandPath);
     const cacheKey = `${def.id}:${commandPath}`;
     const cached = persistedCache?.[cacheKey];
-    if (
+    const cachedVersion = (
       cached &&
       stat &&
       cached.mtimeMs === stat.mtimeMs &&
       cached.size === stat.size &&
-      cached.version &&
-      (def.modelCatalogProbe !== "codex-app-server" || Array.isArray(cached.modelOptions)) &&
-      (!def.modelsProbeArgs || Array.isArray(cached.modelOptions)) &&
-      (!def.modelsFromHelp || Array.isArray(cached.modelOptions))
-    ) {
-      record.version = cached.version;
-      record.status = "cli";
-      record.reason = "";
-      if (Array.isArray(cached.models) && cached.models.length > 0) {
-        record.models = cached.models;
-      }
-      if (Array.isArray(cached.modelOptions) && cached.modelOptions.length > 0) {
-        record.modelOptions = cached.modelOptions;
-      }
-      Object.assign(record, await probeAuth(def, commandPath, record.needsShell));
-      return record;
-    }
-
-    const version = await probeVersion(commandPath, record.needsShell);
+      cached.version
+    );
+    const version = cachedVersion || await probeVersion(commandPath, record.needsShell);
     if (!version) {
       record.status = "error";
       record.reason = `${def.name} CLI를 찾았지만 실행 확인(--version)에 실패했습니다.`;
@@ -560,32 +518,22 @@ function createCapabilityService(options = {}) {
     record.status = "cli";
     record.reason = "";
     Object.assign(record, await probeAuth(def, commandPath, record.needsShell));
-    const probedModels = def.id === "agy" && agyModelProbe
-      ? await agyModelProbe(commandPath, record.needsShell)
-      : await probeModels(def, commandPath, record.needsShell);
-    if (probedModels) record.models = probedModels;
-    if (def.modelCatalogProbe === "codex-app-server" && codexModelProbe) {
-      const catalog = await codexModelProbe(commandPath, record.needsShell);
-      if (catalog?.length) {
-        const defaultCatalogModel = catalog.find((option) => option.isDefault);
-        record.modelOptions = [
-          {
-            id: "default",
-            label: "기본값 (Codex 설정 따름)",
-            efforts: defaultCatalogModel?.efforts?.length
-              ? [...defaultCatalogModel.efforts]
-              : [...def.efforts],
-          },
-          ...catalog,
-        ];
-        record.models = record.modelOptions.map((option) => option.id);
+    let catalog;
+    try {
+      const result = await probeModels(def, commandPath, record.needsShell);
+      catalog = normalizeCatalog(Array.isArray(result) ? result : result?.models);
+      if (def.id === "agy" && result?.authenticationRequired) {
+        record.authStatus = "unauthenticated";
+        record.authReason = "AGY CLI 로그인이 필요합니다. 터미널에서 agy를 실행해 로그인해 주세요.";
+        record.catalogReason = record.authReason;
       }
-    } else if (probedModels) {
-      record.modelOptions = probedModels.map((model) => ({
-        id: model,
-        label: model,
-        efforts: [...def.efforts],
-      }));
+    }
+    catch { catalog = []; }
+    record.modelOptions = catalog;
+    record.models = catalog.map((option) => option.id);
+    if (catalog.length) {
+      record.catalogStatus = "ready";
+      record.catalogReason = "";
     }
     if (stat) {
       record.cachePatch = {
@@ -593,9 +541,6 @@ function createCapabilityService(options = {}) {
           mtimeMs: stat.mtimeMs,
           size: stat.size,
           version,
-          ...(probedModels ? { models: probedModels } : {}),
-          models: record.models,
-          modelOptions: record.modelOptions,
         },
       };
     }
@@ -603,8 +548,8 @@ function createCapabilityService(options = {}) {
   }
 
   async function discover({ force = false } = {}) {
-    if (records && !force) return records;
-    if (discovering && !force) return discovering;
+    if (discovering) return discovering;
+    if (records && !force && Date.now() - discoveredAt < DISCOVERY_TTL_MS) return records;
     discovering = (async () => {
       const persistedCache = force ? null : cache.get() || null;
       // Windows에서는 여러 CLI를 동시에 프로브하면 .cmd 실행이 간헐적으로
@@ -627,6 +572,7 @@ function createCapabilityService(options = {}) {
         } catch {}
       }
       records = results;
+      discoveredAt = Date.now();
       return records;
     })();
     try {
@@ -651,8 +597,10 @@ function toPublicProvider(record) {
     color: record.color,
     aliases: record.aliases,
     status: record.status,
-    available: record.status === "cli",
-    reason: record.reason || "",
+    available: record.status === "cli" && record.catalogStatus === "ready",
+    reason: record.reason || record.catalogReason || "",
+    catalogStatus: record.catalogStatus,
+    catalogReason: record.catalogReason,
     version: record.version,
     models: record.models,
     modelOptions: record.modelOptions,

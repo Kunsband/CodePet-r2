@@ -36,7 +36,7 @@ Install and sign in to the CLIs you want to use: `codex`, `claude`, `agy`, or `g
 - **Mentions:** Send without a mention to hear from all participating agents, one at a time. Use `@codex`, `@claude`, `@agy`, or `@grok` to choose participants; `@all` and `@모두` address the group. An agent can call another participant with a mention, subject to a continuation limit.
 - **Turn control:** View the current speaker and queued turns, cancel individual turns, interject, or stop responses.
 - **Discussion:** Agents take turns until they agree, conclude, or reach the execution budget (nine turns by default).
-- **Per-agent settings:** Choose participation, model, reasoning effort, and tool auto-approval from each participant chip. Available options depend on the installed CLI.
+- **Per-agent settings:** Choose participation, model, reasoning effort, and tool auto-approval from each participant chip. Model and reasoning choices come from the installed CLI; agents cannot run if their model list cannot be retrieved. Unspecified settings follow the CLI configuration.
 - **Messages:** Live partial responses, quote replies, code blocks with copy buttons, formatted text, links, and character emotes.
 
 ### Workspaces and permissions

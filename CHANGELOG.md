@@ -1,5 +1,19 @@
 # Release notes / 릴리즈 노트
 
+## 1.0.7 — 2026-10-14
+
+### English
+
+- Restored each agent's original character emoticons.
+- Removed bundled model and reasoning lists and automatic overrides. Choices are retrieved from the installed CLI; failed lookups and unsupported saved selections block execution.
+- Distinguished missing CLI, required login, and model lookup failures; recheck unavailable agents when returning to the chat.
+
+### 한국어
+
+- 에이전트마다 원래 캐릭터 이모티콘을 사용하도록 복구했습니다.
+- 고정 모델·추론 목록과 임의 기본 선택을 제거했습니다. 설치된 CLI에서 선택지를 조회하며, 조회 실패나 지원되지 않는 저장 설정으로는 실행하지 않습니다.
+- CLI 미설치·로그인 필요·모델 조회 실패를 구분하고 채팅으로 돌아오면 사용할 수 없던 에이전트를 다시 확인합니다.
+
 ## 1.0.6 — 2026-10-14
 
 ### English

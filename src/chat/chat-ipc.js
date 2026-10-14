@@ -8,6 +8,7 @@ const {
 } = require("../providers/provider-capabilities");
 const { toDiagnostics } = require("../providers/provider-diagnostics");
 const { roomAgentsFromCapabilities } = require("./chat-agents");
+const { selectionError } = require("../providers/provider-model-catalog");
 const { ChatRoom, DEFAULT_DISCUSSION_RUN_BUDGET } = require("./chat-room");
 const { buildAgentInvocation, PERMISSION_MODES, INLINE_TEXT_LIMIT } = require("./chat-argv");
 const { createLineParser } = require("./chat-events");
@@ -721,6 +722,10 @@ function createChatFeature(options) {
         if (typeof patch?.enabled === "boolean") next.enabled = patch.enabled;
         if (typeof patch?.model === "string") next.model = patch.model.slice(0, 64);
         if (typeof patch?.effort === "string") next.effort = patch.effort.slice(0, 16);
+        if (typeof patch?.model === "string" || typeof patch?.effort === "string") {
+          const invalidSelection = selectionError(record, next.model, next.effort);
+          if (invalidSelection) throw new Error(invalidSelection);
+        }
         if (typeof patch?.autoApprove === "boolean") {
           if (patch.autoApprove && agentId === "grok") {
             throw new Error("Grok 변경은 Docker 복제본 검토 승인을 생략할 수 없습니다.");

@@ -11,6 +11,7 @@ test("chat IPC persists traces before the next participant, preserves CLI permis
   t.after(() => fs.rm(root, { recursive: true, force: true }));
   const records = ["codex", "claude"].map((id) => ({
     id, name: id, status: "cli", commandPath: `${id}-fixture`, models: ["fixture"],
+    catalogStatus: "ready",
     modelOptions: [{ id: "fixture", isDefault: true }], efforts: ["medium"],
     permissions: { chat: { supported: true, enforcement: "tool-policy" } },
   }));
@@ -43,6 +44,10 @@ test("chat IPC persists traces before the next participant, preserves CLI permis
   const initial = await invoke("chat:state");
   assert.equal(initial.ok, true);
   const sessionId = initial.activeSessionId;
+  assert.equal((await invoke("chat:agent:configure", { sessionId, agentId: "codex", patch: { model: "not-in-catalog" } })).ok, false);
+  assert.equal((await invoke("chat:agent:configure", { sessionId, agentId: "codex", patch: { model: "fixture", effort: "high" } })).ok, false);
+  assert.equal((await invoke("chat:agent:configure", { sessionId, agentId: "codex", patch: { model: "fixture", effort: "default" } })).ok, true);
+  assert.equal((await invoke("chat:agent:configure", { sessionId, agentId: "codex", patch: { model: "default", effort: "default" } })).ok, true);
   assert.equal((await invoke("chat:send", { sessionId, text: "@codex @claude 작업 결과를 확인해줘." })).ok, true);
   let state;
   for (let i = 0; i < 200; i += 1) {
@@ -59,6 +64,7 @@ test("chat IPC persists traces before the next participant, preserves CLI permis
     assert.ok(call.argv.includes("--strict-mcp-config"));
   }
   assert.equal(calls[0].argv[calls[0].argv.indexOf("--sandbox") + 1], "read-only");
+  assert.ok(calls.every((call) => !call.argv.includes("--model") && !call.argv.includes("--effort")));
   assert.equal((await fs.readdir(path.join(root, "traces"))).length, 1);
   assert.equal((await invoke("chat:sessions:delete", { sessionId })).ok, true);
   assert.deepEqual(await fs.readdir(path.join(root, "traces")), []);

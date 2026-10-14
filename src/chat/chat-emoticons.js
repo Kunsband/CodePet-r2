@@ -1,4 +1,4 @@
-const manifest = require("../chat-icon/emoticons/default-manifest.json");
+const manifest = require("../chat-icon/emoticons/manifest.json");
 const fs = require("node:fs");
 const path = require("node:path");
 const { maskNonCallingText } = require("./chat-mention");
@@ -6,6 +6,12 @@ const { maskNonCallingText } = require("./chat-mention");
 const MAX_EMOTICONS_PER_MESSAGE = 1;
 const EMOTICON_KEYS = Object.freeze(Object.keys(manifest));
 const EMOTICON_PATTERN = /\[\[CODEPET_EMOTE:([^\]\r\n]+)\]\]/g;
+const AGENT_EMOTICON_FOLDERS = Object.freeze({
+  codex: "gpt",
+  claude: "claude",
+  agy: "gemini",
+  grok: "grok",
+});
 
 const EMOTICON_MEANINGS = Object.freeze({
   "검토완료": "코드·문서·결과의 검토를 끝냈을 때",
@@ -23,30 +29,17 @@ const EMOTICON_MEANINGS = Object.freeze({
   "우헤헤": "작은 성공이나 장난스러운 만족감에 은근히 득의양양할 때",
   "주인님": "사용자를 친근하게 부르며 요청을 받거나 반가움을 표현할 때",
   "멍청": "자신의 단순 실수나 착각을 가볍게 자책할 때만 사용하고 사용자를 모욕하는 용도로는 사용 금지",
-  "대기": "할 일을 기다리며 차분히 대기할 때",
-  "알겠어": "요청을 이해하고 접수했음을 알릴 때",
-  "작업중": "실제로 작업을 진행하는 중일 때",
-  "질문": "사용자에게 필요한 정보를 질문할 때",
-  "완료": "요청한 작업을 실제로 모두 끝냈을 때",
-  "뿌듯": "확인된 좋은 결과에 자신감이나 뿌듯함을 표현할 때",
-  "설명": "개념이나 방법을 차근차근 설명할 때",
-  "발견": "새로운 사실이나 문제의 원인을 찾아냈을 때",
-  "주의": "실행 전에 위험이나 주의점을 알릴 때",
-  "미안": "자신의 실수를 인정하고 사과할 때",
-  "어휴": "번거로운 상황에 가볍게 한숨을 표현할 때",
-  "펀치": "서로 동의한 가벼운 장난 맥락에서만 사용하고 위협에는 사용 금지",
-  "반대": "제안에 동의하지 않는 이유를 정중히 설명할 때",
-  "출처": "확인한 근거나 출처를 제시할 때",
-  "아이고": "예상 밖의 난감한 상황에 반응할 때",
-  "윙크": "친근한 농담이나 가벼운 격려를 보낼 때",
-  "휴식": "대화를 마치거나 휴식을 권할 때",
 });
 
-function availableEmoticonKeys(_agentId) {
+function availableEmoticonKeys(agentId = "codex") {
+  const folder = Object.hasOwn(AGENT_EMOTICON_FOLDERS, agentId)
+    ? AGENT_EMOTICON_FOLDERS[agentId]
+    : null;
+  if (!folder) return [];
   let files;
   try {
     files = new Set(
-      fs.readdirSync(path.join(__dirname, "..", "chat-icon", "emoticons", "default"))
+      fs.readdirSync(path.join(__dirname, "..", "chat-icon", "emoticons", folder))
     );
   } catch {
     return [];
@@ -67,7 +60,7 @@ function emoticonPromptRules(agentId) {
   ];
 }
 
-function extractEmoticons(value, limit = MAX_EMOTICONS_PER_MESSAGE, agentId = "") {
+function extractEmoticons(value, limit = MAX_EMOTICONS_PER_MESSAGE, agentId = "codex") {
   const emoticons = [];
   const seen = new Set();
   const parts = [];
@@ -82,7 +75,7 @@ function extractEmoticons(value, limit = MAX_EMOTICONS_PER_MESSAGE, agentId = ""
     const file = manifest[key];
     if (file && allowedKeys.has(key) && emoticons.length < limit && !seen.has(key)) {
       seen.add(key);
-      const emoticon = { key, file, folder: "default" };
+      const emoticon = { key, file, folder: AGENT_EMOTICON_FOLDERS[agentId] };
       emoticons.push(emoticon);
       parts.push({ type: "emoticon", ...emoticon });
     }

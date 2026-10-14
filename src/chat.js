@@ -253,7 +253,12 @@ const EFFORT_LABELS = Object.freeze({
 });
 
 function effortLabel(value) {
+  if (value === "default") return "CLI 설정";
   return EFFORT_LABELS[value] || value;
+}
+
+function modelLabel(value) {
+  return value === "default" ? "CLI 설정" : value || "모델 확인 불가";
 }
 
 function applyAppearance(appearance) {
@@ -272,6 +277,9 @@ function providerById(id) {
 }
 
 function doctorStatus(diagnostic) {
+  if (diagnostic.errorCode === "model-catalog-unavailable") {
+    return { tone: "error", label: "모델 조회 실패", detail: diagnostic.message };
+  }
   if (diagnostic.installed !== true) {
     return {
       tone: "error",
@@ -725,7 +733,7 @@ function renderAgents() {
     if (typingAgents.has(agent.id)) chip.classList.add("is-typing");
     chip.title = agent.available
       ? agent.enabled
-        ? "클릭해 모델/속도 설정"
+        ? "클릭해 모델/추론 설정"
         : "이 세션에서 비활성화됨 · 클릭해 설정"
       : agent.reason || "CLI를 찾지 못했습니다";
 
@@ -789,8 +797,9 @@ function openAgentPopover(anchor, agentId) {
 
     const status = document.createElement("p");
     status.className = "popover-status";
-    if (provider.status === "cli") {
+    if (provider.available) {
       status.textContent = `CLI 확인됨 · ${provider.version || ""}`;
+      if (agent.reason) status.textContent += ` · ${agent.reason}`;
     } else {
       status.classList.add("is-warning");
       status.textContent = provider.reason || "CLI를 사용할 수 없습니다.";
@@ -809,8 +818,11 @@ function openAgentPopover(anchor, agentId) {
 
     // 모델 선택
     const modelSelect = document.createElement("select");
-    const modelOptions = (provider.modelOptions || (provider.models || []).map((id) => ({ id, label: id })))
-      .filter((model) => model.id !== "default");
+    const modelOptions = provider.modelOptions || [];
+    const defaultModel = document.createElement("option");
+    defaultModel.value = "default";
+    defaultModel.textContent = provider.available ? "CLI 설정 따름" : "모델 목록 확인 불가";
+    modelSelect.append(defaultModel);
     for (const model of modelOptions) {
       const option = document.createElement("option");
       option.value = model.id;
@@ -818,54 +830,61 @@ function openAgentPopover(anchor, agentId) {
       modelSelect.append(option);
     }
     const currentModel = agent.model;
-    if (!modelOptions.some((option) => option.id === currentModel)) {
+    if (currentModel !== "default" && !modelOptions.some((option) => option.id === currentModel)) {
       const legacyOption = document.createElement("option");
       legacyOption.value = currentModel;
       legacyOption.textContent = `${currentModel} (현재 설정 · 목록에 없음)`;
+      legacyOption.disabled = true;
       modelSelect.append(legacyOption);
     }
     modelSelect.value = currentModel;
     modelSelect.disabled = !provider.available;
     modelSelect.addEventListener("change", () => {
-      const availableEfforts = effortsForModel(modelSelect.value);
-      const suffixEffort = modelSelect.value.match(/-(low|medium|high)$/i)?.[1]?.toLowerCase();
-      const nextEffort = availableEfforts.includes(suffixEffort)
-        ? suffixEffort
-        : availableEfforts.includes("medium") ? "medium" : availableEfforts[0];
+      const nextEffort = "default";
       populateEfforts(modelSelect.value, nextEffort);
       configureAgent(agentId, { model: modelSelect.value, effort: nextEffort });
     });
     root.append(makeField("모델", modelSelect));
 
-    // 속도/노력 선택
+    // 추론 단계 선택
     const effortSelect = document.createElement("select");
     function effortsForModel(modelId) {
       const option = modelOptions.find((entry) => entry.id === modelId);
-      const efforts = option?.efforts?.length ? option.efforts : provider.efforts || [];
-      return efforts.filter((effort) => effort !== "default");
+      return option?.efforts || [];
     }
     function populateEfforts(modelId, selected) {
       effortSelect.textContent = "";
       const efforts = effortsForModel(modelId);
+      const cliDefault = document.createElement("option");
+      cliDefault.value = "default";
+      cliDefault.textContent = provider.available ? "CLI 설정 따름" : "조회 불가";
+      effortSelect.append(cliDefault);
       for (const effort of efforts) {
         const option = document.createElement("option");
         option.value = effort;
         option.textContent = effortLabel(effort);
         effortSelect.append(option);
       }
-      effortSelect.value = efforts.includes(selected) ? selected : efforts[0] || "";
-      effortSelect.disabled = !provider.available || efforts.length <= 1;
+      if (selected !== "default" && !efforts.includes(selected)) {
+        const stale = document.createElement("option");
+        stale.value = selected;
+        stale.textContent = `${effortLabel(selected)} (지원 확인 불가)`;
+        stale.disabled = true;
+        effortSelect.append(stale);
+      }
+      effortSelect.value = selected;
+      effortSelect.disabled = !provider.available || (efforts.length === 0 && selected === "default");
     }
     populateEfforts(currentModel, agent.effort);
     if (effortSelect.disabled && provider.status !== "cli") {
       effortSelect.title = "CLI 설치 후 사용할 수 있습니다";
-    } else if (effortsForModel(currentModel).length <= 1) {
-      effortSelect.title = "이 CLI에서 검증된 속도 옵션이 없습니다";
+    } else if (effortsForModel(currentModel).length === 0) {
+      effortSelect.title = "이 모델에서 CLI가 제공한 추론 선택지가 없습니다";
     }
     effortSelect.addEventListener("change", () => {
       configureAgent(agentId, { effort: effortSelect.value });
     });
-    root.append(makeField("속도/노력", effortSelect));
+    root.append(makeField("추론", effortSelect));
 
     const autoApproveToggle = document.createElement("input");
     autoApproveToggle.type = "checkbox";
@@ -1259,9 +1278,9 @@ function renderMessage(message) {
   const agentMeta = message.agentMeta || {};
   const metaParts = isUser ? [name] : [name, `@${message.author}`];
   if (!isUser) {
-    const shownModel = agentMeta.model && agentMeta.model !== "default" ? agentMeta.model : agent?.model;
-    const shownEffort = agentMeta.effort && agentMeta.effort !== "default" ? agentMeta.effort : agent?.effort;
-    metaParts.push(shownModel || "모델 확인 불가", effortLabel(shownEffort || "추론 강도 확인 불가"));
+    const shownModel = agentMeta.model || agent?.model;
+    const shownEffort = agentMeta.effort || agent?.effort;
+    metaParts.push(modelLabel(shownModel), effortLabel(shownEffort || "추론 강도 확인 불가"));
   }
   nameEl.textContent = metaParts.join(" · ");
   const timeEl = document.createElement("span");
@@ -1503,7 +1522,7 @@ function handleRunEvent(payload) {
     const nameEl = document.createElement("span");
     nameEl.className = "name";
     const liveMeta = [agent?.name || agentId, `@${agentId}`];
-    liveMeta.push(agent?.model || "모델 확인 중");
+    liveMeta.push(modelLabel(agent?.model));
     liveMeta.push(effortLabel(agent?.effort || "추론 강도 확인 중"));
     liveMeta.push("응답 중");
     nameEl.textContent = liveMeta.join(" · ");
@@ -1900,14 +1919,33 @@ exportSessionButton.addEventListener("click", async () => {
   exportSessionButton.disabled = !activeSessionId;
 });
 
-refreshProvidersButton.addEventListener("click", async () => {
-  const result = await call(window.chatApi.providersRefresh());
-  if (result?.providers) {
-    providers = result.providers;
-    diagnostics = result.diagnostics || diagnostics;
-    flashNotice("CLI 탐지를 새로 고쳤습니다.", false);
-    renderHeader();
-    if (!doctorBackdrop.hidden) renderDoctor();
+let refreshingProviders = false;
+let lastProviderRefresh = Date.now();
+async function refreshProviders({ quiet = false } = {}) {
+  if (refreshingProviders) return;
+  refreshingProviders = true;
+  lastProviderRefresh = Date.now();
+  refreshProvidersButton.disabled = true;
+  try {
+    const result = await call(window.chatApi.providersRefresh());
+    if (result?.providers) {
+      providers = result.providers;
+      diagnostics = result.diagnostics || diagnostics;
+      if (!quiet) flashNotice("CLI 탐지를 새로 고쳤습니다.", false);
+      renderHeader();
+      if (!doctorBackdrop.hidden) renderDoctor();
+    }
+  } finally {
+    refreshingProviders = false;
+    refreshProvidersButton.disabled = false;
+  }
+}
+refreshProvidersButton.addEventListener("click", () => refreshProviders());
+// Recheck after returning from installation/login without polling or resetting history.
+window.addEventListener("focus", () => {
+  if (providers.some((provider) => !provider.available)
+    && !turnState.current && Date.now() - lastProviderRefresh >= 60_000) {
+    refreshProviders({ quiet: true });
   }
 });
 

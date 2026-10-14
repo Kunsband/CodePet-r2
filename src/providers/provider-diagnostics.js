@@ -22,6 +22,7 @@ const ERROR_CODES = Object.freeze({
   VERSION_PROBE_FAILED: "version-probe-failed",
   NOT_LOGGED_IN: "not-logged-in",
   AUTH_STATUS_UNKNOWN: "auth-status-unknown",
+  MODEL_CATALOG_UNAVAILABLE: "model-catalog-unavailable",
 });
 
 function resolveDefaultModel(record) {
@@ -31,7 +32,7 @@ function resolveDefaultModel(record) {
   if (flagged?.id) return flagged.id;
   const models = Array.isArray(record.models) ? record.models : [];
   if (models.includes("default")) return "default";
-  return models[0] || null;
+  return null;
 }
 
 // capability record 하나를 진단 결과 객체로 변환합니다.
@@ -67,6 +68,10 @@ function toDiagnostic(record) {
 
   if (record.authStatus === "authenticated") {
     diagnostic.loggedIn = true;
+    if (record.catalogStatus !== "ready") {
+      diagnostic.errorCode = ERROR_CODES.MODEL_CATALOG_UNAVAILABLE;
+      diagnostic.message = record.catalogReason || "CLI에서 모델 목록을 확인하지 못했습니다.";
+    }
   } else if (record.authStatus === "unauthenticated") {
     diagnostic.loggedIn = false;
     diagnostic.errorCode = ERROR_CODES.NOT_LOGGED_IN;
@@ -85,7 +90,7 @@ function toDiagnostics(records) {
 
 // 설치 + 로그인까지 확인된 상태인지. doctor 종료 코드와 UI 요약에 사용합니다.
 function isHealthy(diagnostic) {
-  return diagnostic.installed === true && diagnostic.loggedIn === true;
+  return diagnostic.installed === true && diagnostic.loggedIn === true && !diagnostic.errorCode;
 }
 
 // 전체 진단 실행 헬퍼. options는 createCapabilityService에 그대로 전달됩니다.

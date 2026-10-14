@@ -14,6 +14,7 @@ function makeRecord(overrides = {}) {
     id: "claude",
     name: "Claude",
     status: "cli",
+    catalogStatus: "ready",
     reason: "",
     version: "2.1.0",
     models: ["default", "fable", "opus"],
@@ -44,6 +45,15 @@ test("설치·로그인 완료 상태를 installed/loggedIn true로 매핑한다
     loginCommand: "claude auth login",
   });
   assert.equal(isHealthy(diagnostic), true);
+});
+
+test("로그인된 CLI의 모델 조회 실패를 준비됨이나 미설치로 표시하지 않는다", () => {
+  const diagnostic = toDiagnostic(makeRecord({ catalogStatus: "unavailable", catalogReason: "모델 목록 조회 실패", models: [], modelOptions: [] }));
+  assert.equal(diagnostic.installed, true);
+  assert.equal(diagnostic.loggedIn, true);
+  assert.equal(diagnostic.errorCode, ERROR_CODES.MODEL_CATALOG_UNAVAILABLE);
+  assert.equal(diagnostic.model, null);
+  assert.equal(isHealthy(diagnostic), false);
 });
 
 test("미설치는 installed false + cli-not-found로 구분한다", () => {

@@ -26,7 +26,10 @@ function provider(id, overrides = {}) {
       "workspace-write": { supported: true, enforcement: "sandbox" },
     },
   }[id];
-  return { id, name: id, status: "cli", permissions, ...overrides };
+  return { id, name: id, status: "cli", permissions, catalogStatus: "ready",
+    modelOptions: ["fixture", "fable", "gpt-5.3-codex", "grok-4.5", "x"]
+      .map((id) => ({ id, efforts: ["high"] }))
+      .concat([{ id: "gemini-3.1-pro-high", efforts: [] }]), ...overrides };
 }
 
 function build(id, input = {}) {
@@ -176,7 +179,7 @@ test("agy: cli 상태가 아니면 실행 불가", () => {
 });
 
 test("agy chat 모드: plan + sandbox + 슬래시 명령 차단", () => {
-  const result = build("agy", { model: "gemini-3.1-pro-high", effort: "high" });
+  const result = build("agy", { model: "gemini-3.1-pro-high" });
   assert.equal(result.ok, true);
   assert.equal(result.cwd, CHAT_CWD);
   const argv = result.argv;
@@ -186,7 +189,7 @@ test("agy chat 모드: plan + sandbox + 슬래시 명령 차단", () => {
   assert.ok(argv.includes("--disable-slash-commands"));
   assert.equal(argv[argv.indexOf("--mode") + 1], "plan");
   assert.equal(argv[argv.indexOf("--model") + 1], "gemini-3.1-pro-high");
-  assert.equal(argv[argv.indexOf("--effort") + 1], "high");
+  assert.ok(!argv.includes("--effort"));
   assert.equal(result.enforcement, "sandbox");
 });
 

@@ -20,6 +20,7 @@ function makeService({
   probes = {},
   cacheStore = {},
   codexModelProbe = null,
+  claudeModelProbe = null,
 } = {}) {
   const calls = { runs: [] };
   const service = createCapabilityService({
@@ -50,6 +51,7 @@ function makeService({
       },
     },
     ...(codexModelProbe ? { codexModelProbe } : {}),
+    ...(claudeModelProbe ? { claudeModelProbe } : {}),
   });
   return { service, calls };
 }
@@ -90,12 +92,14 @@ test("grok 후보에 공식 관리형 설치 경로가 포함된다", () => {
   assert.deepEqual(candidates, [path.win32.join("C:\\Users\\u", ".grok", "bin", "grok.exe")]);
 });
 
-test("grok 정의는 검증된 모델, 노력, 스트리밍과 단계별 권한 상태를 제공한다", () => {
+test("provider 정의에는 고정 모델이나 추론 목록이 없다", () => {
   const { service } = makeService({});
   const grok = service.defs.find((def) => def.id === "grok");
   assert.ok(grok);
-  assert.deepEqual(grok.models, ["default", "grok-4.5"]);
-  assert.deepEqual(grok.efforts, ["default", "low", "medium", "high"]);
+  for (const def of service.defs) {
+    assert.deepEqual(def.models, []);
+    assert.deepEqual(def.efforts, []);
+  }
   assert.equal(grok.streaming, "streaming-messages-json");
   assert.equal(grok.permissions["workspace-write"].enforcement, "unavailable");
   assert.equal(grok.permissions.chat.supported, true);
@@ -125,7 +129,9 @@ test("grok models 출력으로 로그인 상태와 모델 목록을 함께 판�
   assert.equal(grok.status, "cli");
   assert.equal(grok.version, "grok 1.0.0 (abc123) [stable]");
   assert.equal(grok.authStatus, "authenticated");
-  assert.deepEqual(grok.models, ["default", "grok-4.5", "grok-4.4-fast"]);
+  assert.deepEqual(grok.models, ["grok-4.5", "grok-4.4-fast"]);
+  assert.equal(grok.catalogStatus, "ready");
+  assert.deepEqual(grok.modelOptions[0].efforts, []);
   assert.equal(
     calls.filter((call) => call.file === grokPath && call.args[0] === "models").length,
     2
@@ -148,7 +154,7 @@ test("grok models가 성공 종료해도 미인증 문구를 놓치지 않는다
   const grok = (await service.discover()).find((record) => record.id === "grok");
   assert.equal(grok.authStatus, "unauthenticated");
   assert.match(grok.authReason, /로그인/);
-  assert.deepEqual(grok.models, ["default", "grok-4.5"]);
+  assert.deepEqual(grok.models, ["grok-4.5"]);
 });
 
 test("grok 인증 프로브의 알 수 없는 출력은 로그인 완료로 추정하지 않는다", async () => {
@@ -334,24 +340,25 @@ test("공개 뷰에는 commandPath/needsShell이 절대 포함되지 않는다",
   assert.ok(!json.includes("needsShell"));
   assert.ok(!json.includes(claudePath.replace(/\\/g, "\\\\")));
   const claude = publicView.find((record) => record.id === "claude");
-  assert.equal(claude.available, true);
+  assert.equal(claude.available, false);
+  assert.equal(claude.catalogStatus, "unavailable");
   assert.ok(Array.isArray(claude.models));
   assert.ok(claude.permissions.chat.enforcement);
 });
 
-test("claude 검증된 모델/노력 옵션이 노출된다", async () => {
+test("설치 또는 조회 전에는 모델과 추론 목록을 만들어내지 않는다", async () => {
   const { service } = makeService({});
   const records = await service.discover();
   const claude = records.find((record) => record.id === "claude");
-  assert.deepEqual(claude.models, ["default", "fable", "opus", "sonnet"]);
-  assert.ok(claude.efforts.includes("max"));
+  assert.deepEqual(claude.models, []);
+  assert.deepEqual(claude.efforts, []);
   const codex = records.find((record) => record.id === "codex");
-  assert.deepEqual(codex.models, ["default"]);
+  assert.deepEqual(codex.models, []);
   assert.equal(codex.allowCustomModel, false);
   const agy = records.find((record) => record.id === "agy");
   assert.equal(agy.permissions["workspace-write"].supported, true);
   assert.equal(agy.permissions.chat.enforcement, "sandbox");
-  assert.ok(agy.efforts.includes("high"));
+  assert.deepEqual(agy.efforts, []);
 });
 
 test("Codex app-server 카탈로그를 공개 모델과 모델별 노력 목록으로 변환한다", async () => {
@@ -365,9 +372,9 @@ test("Codex app-server 카탈로그를 공개 모델과 모델별 노력 목록�
     ],
   });
   const codex = (await service.discover()).find((record) => record.id === "codex");
-  assert.deepEqual(codex.models, ["default", "gpt-5.6-sol", "gpt-5.6-terra"]);
+  assert.deepEqual(codex.models, ["gpt-5.6-sol", "gpt-5.6-terra"]);
   assert.deepEqual(codex.modelOptions[0].efforts, ["low", "max"]);
-  assert.equal(codex.modelOptions[1].label, "GPT-5.6-Sol");
+  assert.equal(codex.modelOptions[0].label, "GPT-5.6-Sol");
 });
 
 test("agy CLI가 공식 후보 경로에 있으면 PATH 없이도 cli 상태가 된다", async () => {
@@ -420,12 +427,64 @@ test("agy 모델 목록은 `agy models` 프로브로 갱신된다", async () => 
   const records = await service.discover();
   const agy = records.find((record) => record.id === "agy");
   assert.deepEqual(agy.models, [
-    "default",
     "gemini-3.6-flash-high",
     "gemini-3.1-pro-low",
     "claude-sonnet-4-6",
   ]);
-  // 캐시에도 모델 목록이 함께 저장된다.
+  // 계정과 서버에 따라 바뀌는 모델 목록은 재시작할 때 다시 조회한다.
   const cached = cacheStore.value[`agy:${agyPath}`];
-  assert.ok(Array.isArray(cached.models));
+  assert.equal(cached.models, undefined);
+  assert.equal(cached.modelOptions, undefined);
+  assert.ok(agy.modelOptions.every((model) => model.efforts.length === 0));
+});
+
+test("이전 캐시에 하드코딩 목록이 있어도 조회 실패 시 실행 불가다", async () => {
+  const claudePath = "C:\\Users\\u\\.local\\bin\\claude.exe";
+  const cacheStore = { value: { [`claude:${claudePath}`]: {
+    mtimeMs: 111, size: 222, version: "fixture-version", models: ["old-model"],
+    modelOptions: [{ id: "old-model", efforts: ["high"] }],
+  } } };
+  const { service } = makeService({ files: new Set([claudePath]), cacheStore,
+    probes: { [claudePath]: "fixture-version" }, claudeModelProbe: async () => null });
+  const claude = toPublicProviders(await service.discover()).find((record) => record.id === "claude");
+  assert.equal(claude.status, "cli");
+  assert.equal(claude.available, false);
+  assert.deepEqual(claude.modelOptions, []);
+  assert.match(claude.reason, /모델 목록/);
+});
+
+test("강제 재탐지는 계정 변경 후 목록을 교체하고 실패 시 기존 목록도 폐기한다", async () => {
+  const claudePath = "C:\\Users\\u\\.local\\bin\\claude.exe";
+  let catalog = [{ id: "account-a-model", efforts: ["high"] }];
+  let probes = 0;
+  const { service } = makeService({ files: new Set([claudePath]), probes: { [claudePath]: "fixture-version" },
+    claudeModelProbe: async () => { probes += 1; return catalog; } });
+  assert.deepEqual((await service.discover()).find((r) => r.id === "claude").models, ["account-a-model"]);
+  await service.discover();
+  assert.equal(probes, 1);
+  catalog = [{ id: "account-b-model", efforts: [] }];
+  assert.deepEqual((await service.discover({ force: true })).find((r) => r.id === "claude").models, ["account-b-model"]);
+  catalog = null;
+  const failed = (await service.discover({ force: true })).find((r) => r.id === "claude");
+  assert.deepEqual(failed.models, []);
+  assert.equal(failed.catalogStatus, "unavailable");
+});
+
+test("앱 시작 후 설치된 AGY를 재탐지하고 로그인 필요를 미설치와 구분한다", async () => {
+  const agyPath = path.win32.join(WIN_ENV.LOCALAPPDATA, "agy", "bin", "agy.exe");
+  const files = new Set();
+  const service = createCapabilityService({ platform: "win32", env: WIN_ENV, home: "C:\\Users\\u",
+    fs: { existsSync: (file) => files.has(file), statSync: () => ({ mtimeMs: 1, size: 2 }) },
+    runCommand: async (file, args) => file !== agyPath ? { ok: false, stdout: "", stderr: "" }
+      : args[0] === "--version" ? { ok: true, stdout: "fixture-version", stderr: "" }
+      : { ok: false, stdout: "", stderr: "Error: Please sign in to view available models. Launch the CLI without arguments to sign in." },
+  });
+  assert.equal((await service.discover()).find((r) => r.id === "agy").status, "absent");
+  files.add(agyPath);
+  const agy = (await service.discover({ force: true })).find((r) => r.id === "agy");
+  assert.equal(agy.status, "cli");
+  assert.equal(agy.authStatus, "unauthenticated");
+  assert.equal(agy.catalogStatus, "unavailable");
+  assert.match(toPublicProviders([agy])[0].reason, /CLI 로그인/);
+  assert.deepEqual(agy.models, []);
 });
