@@ -19,7 +19,7 @@ test("non-Windows platforms never launch a floating bar", () => {
   bar.update({ providers: [] }); bar.setVisible(true); assert.equal(bar.getBounds(), null); bar.dispose();
 });
 
-test("native renderer submits an opaque quota surface to a hidden layered child", { skip: process.platform !== "win32", timeout: 30000 }, () => {
+test("native renderer submits a clickable, theme-aware quota surface to a hidden layered child", { skip: process.platform !== "win32", timeout: 30000 }, () => {
   const { execFileSync } = require("node:child_process");
   const path = require("node:path");
   const output = execFileSync(path.join(process.env.SystemRoot, "System32", "WindowsPowerShell", "v1.0", "powershell.exe"),

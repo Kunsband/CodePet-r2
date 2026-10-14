@@ -10,10 +10,19 @@
 </head>
 <body>
   <main id="details">
-    <header><div><p class="eyebrow">CODEPET</p><h1>남은 한도</h1></div><button id="close" class="icon" aria-label="닫기">×</button></header>
-    <div class="toolbar"><span>현재 로그인 계정 · 남은 비율</span><button id="refresh">새로고침</button></div>
+    <header class="popup-header">
+      <div class="brand-lockup">
+        <span class="brand-mark" aria-hidden="true"><i></i><i></i></span>
+        <span><strong>남은 한도</strong><small>CODEPET LIMITS</small></span>
+      </div>
+      <button id="close" class="icon-button" type="button" aria-label="닫기">×</button>
+    </header>
+    <div class="section-title-row">
+      <h1>현재 로그인 계정</h1>
+      <button id="refresh" class="text-button" type="button">새로고침</button>
+    </div>
     <div id="providers" aria-live="polite"><p class="empty">로그인 상태 확인 중…</p></div>
-    <footer><span id="status">5분마다 자동 갱신</span><button id="accounts">계정 관리</button></footer>
+    <footer><span id="status">자동 갱신</span><button id="accounts" class="text-button" type="button">계정 관리</button></footer>
   </main>
 </body>
 </html>

@@ -16,20 +16,28 @@ try {
   $taskbarTestWidget.UpdateState($taskbarTestState)
   if (-not $taskbarTestWidget.Rendered) { throw "UpdateLayeredWindow failed: $($taskbarTestWidget.RenderError)" }
   if ($taskbarTestParent.Visible) { throw 'Test parent must remain hidden' }
-  $taskbarTestBitmap = $taskbarTestWidget.RenderSurface(227, 48)
-  try {
-    $taskbarTestPixels = 0
-    for ($taskbarTestX = 32; $taskbarTestX -lt 227; $taskbarTestX++) {
-      for ($taskbarTestY = 0; $taskbarTestY -lt 48; $taskbarTestY++) {
-        $taskbarTestColor = $taskbarTestBitmap.GetPixel($taskbarTestX, $taskbarTestY)
-        if ($taskbarTestColor.A -ne 255) { throw 'Non-opaque quota text surface' }
-        if ($taskbarTestColor.R -gt 80) { $taskbarTestPixels++ }
+  $taskbarTestTotal = 0
+  foreach ($taskbarTestLight in @($false, $true)) {
+    $taskbarTestWidget.LightTheme = $taskbarTestLight
+    $taskbarTestBitmap = $taskbarTestWidget.RenderSurface(198, 48)
+    try {
+      $taskbarTestPixels = 0
+      for ($taskbarTestX = 0; $taskbarTestX -lt 198; $taskbarTestX++) {
+        for ($taskbarTestY = 0; $taskbarTestY -lt 48; $taskbarTestY++) {
+          $taskbarTestColor = $taskbarTestBitmap.GetPixel($taskbarTestX, $taskbarTestY)
+          # Every pixel keeps a little alpha so the whole widget stays clickable.
+          if ($taskbarTestColor.A -lt 1) { throw 'Click-through hole in quota surface' }
+          if ($taskbarTestX -ge 36 -and $taskbarTestColor.A -gt 120) { $taskbarTestPixels++ }
+        }
       }
-    }
-    if ($taskbarTestPixels -lt 200) { throw 'Quota text did not render' }
-    if ($env:CODEPET_RENDER_TEST_IMAGE) { $taskbarTestBitmap.Save($env:CODEPET_RENDER_TEST_IMAGE) }
-    Write-Output "PASS: hidden layered child, native surface submitted, $taskbarTestPixels text pixels"
-  } finally { $taskbarTestBitmap.Dispose() }
+      if ($taskbarTestPixels -lt 150) { throw "Quota text did not render (light=$taskbarTestLight)" }
+      $taskbarTestTotal += $taskbarTestPixels
+      if ($env:CODEPET_RENDER_TEST_IMAGE) {
+        $taskbarTestBitmap.Save($env:CODEPET_RENDER_TEST_IMAGE.Replace('.png', $(if ($taskbarTestLight) { '-light.png' } else { '-dark.png' })))
+      }
+    } finally { $taskbarTestBitmap.Dispose() }
+  }
+  Write-Output "PASS: hidden layered child, native surface submitted, $taskbarTestTotal text pixels"
 } finally {
   $taskbarTestWidget.Dispose()
   $taskbarTestParent.Dispose()

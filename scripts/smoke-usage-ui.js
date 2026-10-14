@@ -30,7 +30,7 @@ async function run() {
       gauges: [{ label: "5시간", usedPercent: 92 }, { label: "7일", usedPercent: 59 }] },
     { id: "grok", label: "Grok", connected: false, error: "로그인 필요", gauges: [] },
   ];
-  monitor.snapshot = () => ({ providers: rows, intervalMs: 300000 });
+  monitor.snapshot = () => ({ providers: rows, intervalMs: 60000 });
   monitor.start = monitor.stop = () => {};
   monitor.refresh = async () => monitor.emit("update", monitor.snapshot());
   monitor.invalidate = monitor.refresh;

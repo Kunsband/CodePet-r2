@@ -1,11 +1,13 @@
 using System;
 using System.Drawing;
+using System.Drawing.Drawing2D;
 using System.Drawing.Imaging;
 using System.IO;
 using System.Runtime.InteropServices;
 using System.Threading;
 using System.Web.Script.Serialization;
 using System.Windows.Forms;
+using Microsoft.Win32;
 
 // A child of Explorer's taskbar, never a floating/topmost desktop window.
 // Layered rendering adapted from RHPLUSSEUNG/codex-usage-monitor and
@@ -48,6 +50,9 @@ public sealed class CodePetTaskbar : Form {
   public bool Rendered { get; private set; }
   public int RenderError { get; private set; }
   int renderedWidth, renderedHeight;
+  bool hover, lightTheme = ReadLightTheme();
+  // Column geometry at 100% scale (48px taskbar); keep Position() and DrawContent() in sync.
+  const int IconColumn = 36, RowWidth = 52, TrailingPad = 6;
   public CodePetTaskbar(IntPtr parent) {
     taskbar = parent;
     Text = "CodePet taskbar usage";
@@ -57,7 +62,8 @@ public sealed class CodePetTaskbar : Form {
     ShowInTaskbar = false;
     AutoScaleMode = AutoScaleMode.None;
     Cursor = Cursors.Hand;
-    BackColor = Color.FromArgb(32, 32, 32);
+    MouseEnter += delegate { hover = true; needsRender = true; Position(); };
+    MouseLeave += delegate { hover = false; needsRender = true; Position(); };
     MouseUp += delegate(object sender, MouseEventArgs e) { if (e.Button == MouseButtons.Left) Emit("click"); };
   }
   protected override bool ShowWithoutActivation { get { return true; } }
@@ -105,7 +111,9 @@ public sealed class CodePetTaskbar : Form {
     Rect nr;
     if (notify != IntPtr.Zero && GetWindowRect(notify, out nr)) available = Math.Max(0, nr.Left - tr.Left);
     float scale = Math.Max(1f, height / 48f);
-    int width = Math.Min(available, (int)((32 + Math.Max(1, state.rows.Length) * 65) * scale));
+    int width = Math.Min(available, (int)((IconColumn + Math.Max(1, state.rows.Length) * RowWidth + TrailingPad) * scale));
+    bool light = ReadLightTheme();
+    if (light != lightTheme) { lightTheme = light; needsRender = true; }
     int offset = Math.Max(0, Math.Min(state.offset, Math.Max(0, available - width)));
     bool show = state.visible && width > 0;
     // Keep the native child above taskbar siblings, without activating any app.
@@ -140,30 +148,72 @@ public sealed class CodePetTaskbar : Form {
       }
     }
   }
+  // The taskbar follows SystemUsesLightTheme (not the app theme).
+  public static bool ReadLightTheme() {
+    try {
+      using (RegistryKey key = Registry.CurrentUser.OpenSubKey(@"Software\Microsoft\Windows\CurrentVersion\Themes\Personalize")) {
+        object value = key == null ? null : key.GetValue("SystemUsesLightTheme");
+        return value is int && (int)value != 0;
+      }
+    } catch { return false; }
+  }
+  public bool LightTheme { get { return lightTheme; } set { lightTheme = value; needsRender = true; } }
   public Bitmap RenderSurface(int width, int height) {
     Bitmap bitmap = new Bitmap(width, height, PixelFormat.Format32bppPArgb);
     bitmap.SetResolution(96, 96);
     using (Graphics graphics = Graphics.FromImage(bitmap)) {
-      graphics.Clear(BackColor);
-      graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.ClearTypeGridFit;
-      DrawContent(graphics, height);
+      // Alpha 1 keeps the whole widget clickable while letting the taskbar's
+      // own material show through, like the native tray buttons.
+      graphics.Clear(Color.FromArgb(1, 0, 0, 0));
+      graphics.SmoothingMode = SmoothingMode.AntiAlias;
+      graphics.InterpolationMode = InterpolationMode.HighQualityBicubic;
+      graphics.PixelOffsetMode = PixelOffsetMode.HighQuality;
+      // ClearType needs an opaque backdrop; grayscale AA composes correctly.
+      graphics.TextRenderingHint = System.Drawing.Text.TextRenderingHint.AntiAliasGridFit;
+      DrawContent(graphics, width, height);
     }
     return bitmap;
   }
-  void DrawContent(Graphics graphics, int height) {
+  static GraphicsPath RoundedRect(RectangleF r, float radius) {
+    GraphicsPath path = new GraphicsPath();
+    float d = radius * 2;
+    path.AddArc(r.X, r.Y, d, d, 180, 90);
+    path.AddArc(r.Right - d, r.Y, d, d, 270, 90);
+    path.AddArc(r.Right - d, r.Bottom - d, d, d, 0, 90);
+    path.AddArc(r.X, r.Bottom - d, d, d, 90, 90);
+    path.CloseFigure();
+    return path;
+  }
+  void DrawContent(Graphics graphics, int surfaceWidth, int height) {
     float s = Math.Max(1f, height / 48f);
-    int x = (int)(32 * s), iconSize = (int)(24 * s);
-    if (picture != null) graphics.DrawImage(picture, (int)(4 * s), (height - iconSize) / 2, iconSize, iconSize);
-    using (Font labelFont = new Font("Segoe UI", 8 * s, FontStyle.Regular, GraphicsUnit.Point))
-    using (Font valueFont = new Font("Segoe UI", 10 * s, FontStyle.Bold, GraphicsUnit.Point))
-    using (StringFormat format = new StringFormat { Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap }) {
-      if (state.rows.Length == 0) graphics.DrawString("CodePet", labelFont, Brushes.Gainsboro, x, height / 2 - 8);
+    Color ink = lightTheme ? Color.FromArgb(255, 26, 26, 26) : Color.White;
+    Color muted = lightTheme ? Color.FromArgb(160, 0, 0, 0) : Color.FromArgb(178, 255, 255, 255);
+    Color warn = lightTheme ? Color.FromArgb(180, 83, 9) : Color.FromArgb(251, 191, 36);
+    Color danger = lightTheme ? Color.FromArgb(220, 38, 38) : Color.FromArgb(248, 113, 113);
+    if (hover) {
+      RectangleF plate = new RectangleF(2 * s, 4 * s, surfaceWidth - 4 * s, height - 8 * s);
+      using (GraphicsPath path = RoundedRect(plate, 4 * s))
+      using (Brush brush = new SolidBrush(lightTheme ? Color.FromArgb(18, 0, 0, 0) : Color.FromArgb(22, 255, 255, 255)))
+        graphics.FillPath(brush, path);
+    }
+    int iconSize = (int)(22 * s);
+    if (picture != null) graphics.DrawImage(picture, (int)(9 * s), (height - iconSize) / 2, iconSize, iconSize);
+    float x = IconColumn * s, top = (height - 34 * s) / 2;
+    using (Font labelFont = new Font("Segoe UI", 7.5f * s, FontStyle.Regular, GraphicsUnit.Point))
+    using (Font valueFont = new Font("Segoe UI Semibold", 10f * s, FontStyle.Regular, GraphicsUnit.Point))
+    using (Brush labelBrush = new SolidBrush(muted))
+    using (StringFormat format = new StringFormat { Alignment = StringAlignment.Center, LineAlignment = StringAlignment.Center,
+      Trimming = StringTrimming.EllipsisCharacter, FormatFlags = StringFormatFlags.NoWrap }) {
+      if (state.rows.Length == 0) {
+        using (Brush brush = new SolidBrush(muted)) graphics.DrawString("CodePet", labelFont, brush, new RectangleF(x, 0, RowWidth * s, height), format);
+        return;
+      }
+      float width = RowWidth * s;
       foreach (Row row in state.rows) {
-        int width = (int)(65 * s);
-        graphics.DrawString(row.label, labelFont, Brushes.Gainsboro, new Rectangle(x, (int)(3 * s), width, (int)(18 * s)), format);
+        graphics.DrawString(row.label, labelFont, labelBrush, new RectangleF(x, top, width, 14 * s), format);
         string value = row.remainingPercent.HasValue ? Math.Round(row.remainingPercent.Value) + "%" + (row.stale ? "*" : "") : "—";
-        Color color = row.remainingPercent <= 10 ? Color.Salmon : row.remainingPercent <= 30 ? Color.Khaki : Color.White;
-        using (Brush brush = new SolidBrush(color)) graphics.DrawString(value, valueFont, brush, new Rectangle(x, (int)(20 * s), width, (int)(23 * s)), format);
+        Color color = row.remainingPercent <= 10 ? danger : row.remainingPercent <= 30 ? warn : ink;
+        using (Brush brush = new SolidBrush(color)) graphics.DrawString(value, valueFont, brush, new RectangleF(x, top + 13 * s, width, 21 * s), format);
         x += width;
       }
     }

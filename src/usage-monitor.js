@@ -1,7 +1,7 @@
 const { EventEmitter } = require("node:events");
 
 class UsageMonitor extends EventEmitter {
-  constructor(loaders, { intervalMs = 300000, now = Date.now } = {}) {
+  constructor(loaders, { intervalMs = 60000, now = Date.now } = {}) {
     super();
     this.loaders = loaders;
     this.intervalMs = intervalMs;
