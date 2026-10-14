@@ -86,11 +86,11 @@ test("영문·한국어 README가 저장소·권한·첨부·AGY 구분을 함�
   assert.match(readme, /Workspaces and permissions/);
   assert.match(readme, /Attachments/);
   assert.match(readme, /the IDE and `agy` CLI are separate/);
-  assert.match(readme, /chat store never records CLI login tokens or credentials/);
+  assert.match(readme, /does not copy CLI credentials into chat storage/);
   assert.match(readmeKo, /워크스페이스와 권한/);
   assert.match(readmeKo, /첨부 파일/);
   assert.match(readmeKo, /IDE와 `agy` CLI는 별개/);
-  assert.match(readmeKo, /채팅 저장소에는 CLI 로그인 토큰\/자격 증명을 기록하지 않습니다/);
+  assert.match(readmeKo, /CLI 자격 증명을 채팅 저장소에 복사하지 않으며/);
 });
 
 test("위험 우회 플래그는 명시적 자동 승인 경로에만 있다", () => {

@@ -12,6 +12,8 @@ const { ChatRoom, DEFAULT_DISCUSSION_RUN_BUDGET } = require("./chat-room");
 const { buildAgentInvocation, PERMISSION_MODES, INLINE_TEXT_LIMIT } = require("./chat-argv");
 const { createLineParser } = require("./chat-events");
 const { runAgentProcess } = require("./chat-agent-runner");
+const { ChatTraceStore } = require("./chat-traces");
+const { runWithTraceAccess } = require("./chat-trace-access");
 const { DEFAULT_MAX_MESSAGES } = require("./chat-prompt");
 const { GrokDockerRuntime } = require("../grok-docker-runtime");
 const {
@@ -122,6 +124,7 @@ function createChatFeature(options) {
   const { ipcMain, dialog, BrowserWindow, shell } = electron;
 
   let store = null;
+  let traceStore = null;
   let storeError = null;
   let capabilityService = null;
   const grokDockerRuntime = options.grokDockerRuntime || new GrokDockerRuntime();
@@ -135,6 +138,7 @@ function createChatFeature(options) {
     if (store || storeError) return store;
     try {
       store = new ChatStore({ root: options.storeRoot }).init();
+      if (!store.readOnly) traceStore = new ChatTraceStore({ root: store.root, hasSession: (id) => store.hasSession(id) });
     } catch (error) {
       storeError = error?.message || String(error);
       console.warn("[code-pet] 채팅 저장소 초기화 실패:", storeError);
@@ -259,33 +263,43 @@ function createChatFeature(options) {
       if (extraLines.length > 0) fullPrompt = `${prompt}\n${extraLines.join("\n")}`;
 
       const permissionMode = meta.permissionMode || "chat";
-      const execution = resolveAgentExecution({
+      const run = runWithTraceAccess({
+        traceStore,
+        sessionId,
         agentId: agent.id,
-        permissionMode,
-        invocation,
-        record,
-        workspace: meta.workspace || null,
-        chatCwd: store.runtimeChatDir(),
         runId,
-        grokDockerRuntime,
-      });
-
-      const run = runAgentProcess({
-        commandPath: execution.commandPath,
-        needsShell: execution.needsShell,
-        argv: execution.argv,
         prompt: fullPrompt,
-        promptTransport: execution.promptTransport,
-        promptFileFlag: execution.promptFileFlag,
-        cwd: execution.cwd,
-        outputFile,
-        parseLine: createLineParser(agent.id),
-        onEvent: emitEvent,
-        timeoutMs: options.timeoutMs,
-        maxOutputBytes: execution.maxOutputBytes,
-        provider: agent.id,
-        runId,
-        onCancel: execution.onCancel,
+        emitEvent,
+        startRun: ({ prompt: nextPrompt, onTrace, onEvent }) => {
+          const execution = resolveAgentExecution({
+            agentId: agent.id,
+            permissionMode,
+            invocation,
+            record,
+            workspace: meta.workspace || null,
+            chatCwd: store.runtimeChatDir(),
+            runId,
+            grokDockerRuntime,
+          });
+
+          return runAgentProcess({
+            commandPath: execution.commandPath,
+            needsShell: execution.needsShell,
+            argv: execution.argv,
+            prompt: nextPrompt,
+            promptTransport: execution.promptTransport,
+            promptFileFlag: execution.promptFileFlag,
+            cwd: execution.cwd,
+            outputFile,
+            parseLine: createLineParser(agent.id, onTrace),
+            onEvent,
+            timeoutMs: options.timeoutMs,
+            maxOutputBytes: execution.maxOutputBytes,
+            provider: agent.id,
+            runId,
+            onCancel: execution.onCancel,
+          });
+        },
       });
       return {
         promise: run.promise.then(async (result) => {
@@ -528,6 +542,7 @@ function createChatFeature(options) {
         pendingAttachments.delete(sessionId);
         grokDockerRuntime.discardSessionChanges(sessionId);
         store.deleteSession(sessionId);
+        await traceStore?.discard(sessionId).catch(() => {});
         let nextId = getActiveSessionId();
         if (!nextId && !store.readOnly) {
           nextId = store.createSession({}).id;

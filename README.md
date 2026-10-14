@@ -32,6 +32,7 @@ Install and sign in to the CLIs you want to use: `codex`, `claude`, `agy`, or `g
 
 - **Sessions:** Create, rename, and switch conversations; search message contents; export a complete session as Markdown. Deleted sessions remain in trash for 30 days.
 - **History:** Open the latest messages first, up to 50 at a time. New messages appear at the bottom; scroll upward to load older messages while keeping your reading position.
+- **Shared traces:** Ask an agent to check another participant's tool activity and results in the same chat. Saved excerpts are retrieved only when needed; available detail depends on the CLI. Traces expire after seven days, with limits of 64KiB per run, 1MiB per chat, and 16MiB overall.
 - **Mentions:** Send without a mention to hear from all participating agents, one at a time. Use `@codex`, `@claude`, `@agy`, or `@grok` to choose participants; `@all` and `@모두` address the group. An agent can call another participant with a mention, subject to a continuation limit.
 - **Turn control:** View the current speaker and queued turns, cancel individual turns, interject, or stop responses.
 - **Discussion:** Agents take turns until they agree, conclude, or reach the execution budget (nine turns by default).
@@ -95,11 +96,11 @@ For a custom pet, place `spritesheet.webp` in a `pet/` folder beside the executa
 
 ## Data and privacy
 
-Conversations and attachment copies are stored in `~/.code-pet`. Set `CODE_PET_HOME` to change the location. Uninstalling the app leaves this folder in place.
+Conversations, attachment copies, and local task traces are stored in `~/.code-pet`. Set `CODE_PET_HOME` to change the location. Uninstalling the app leaves this folder in place. Deleting a chat also removes its traces.
 
-The chat store never records CLI login tokens or credentials. Saved account profiles are stored separately under `~/.codepet/*-switch`.
+CodePet does not copy CLI credentials into chat storage and redacts recognized credential patterns from task traces. Saved account profiles are stored separately under `~/.codepet/*-switch`.
 
-Conversation context and supported attachments are passed to the selected agent CLI for processing by its provider. AGY prompts can temporarily appear in the operating system's process list while a response is running.
+Conversation context, supported attachments, and requested trace excerpts are passed to the selected agent CLI for processing by its provider. AGY prompts can temporarily appear in the operating system's process list while a response is running.
 
 ## Run from source
 

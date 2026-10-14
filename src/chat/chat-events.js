@@ -24,8 +24,7 @@ const GROK_CHANGESET_PREFIX = "CODEPET_GROK_CHANGESET_V1 ";
 const GROK_CHANGESET_LINE_LIMIT = 2 * 1024 * 1024;
 
 // claude -p --output-format stream-json --include-partial-messages --verbose
-function parseClaudeLine(line) {
-  const event = parseJsonLine(line);
+function parseClaudeLine(line, event = parseJsonLine(line)) {
   if (!event || typeof event !== "object") return null;
 
   if (event.type === "stream_event" && event.event) {
@@ -62,8 +61,7 @@ function parseClaudeLine(line) {
 }
 
 // codex exec --json (버전에 따라 이벤트 스키마가 달라 두 형태를 모두 처리합니다)
-function parseCodexLine(line) {
-  const event = parseJsonLine(line);
+function parseCodexLine(line, event = parseJsonLine(line)) {
   if (!event || typeof event !== "object") return null;
 
   // 신형: {type:"item.completed", item:{type,text,...}}
@@ -117,8 +115,7 @@ function parseCodexLine(line) {
   return null;
 }
 
-function parseAgyLine(line) {
-  const event = parseJsonLine(line);
+function parseAgyLine(line, event = parseJsonLine(line)) {
   if (!event || typeof event !== "object") return null;
   if (event.event === "step_update") {
     const step = event.step_update || {};
@@ -143,7 +140,7 @@ function parseAgyLine(line) {
   return null;
 }
 
-function parseGrokLine(line) {
+function parseGrokLine(line, parsed = undefined) {
   const raw = String(line || "");
   if (raw.startsWith(GROK_CHANGESET_PREFIX)) {
     const payload = raw.slice(GROK_CHANGESET_PREFIX.length);
@@ -156,7 +153,7 @@ function parseGrokLine(line) {
       return { kind: "error", message: "Grok 변경 세트 형식을 읽지 못했습니다." };
     }
   }
-  const event = parseJsonLine(raw);
+  const event = parsed === undefined ? parseJsonLine(raw) : parsed;
   if (!event || typeof event !== "object") {
     return raw.trim() ? { kind: "fallback", text: raw.trim() } : null;
   }
@@ -193,12 +190,18 @@ function parseGrokLine(line) {
   return null;
 }
 
-function createLineParser(providerId) {
-  if (providerId === "claude") return parseClaudeLine;
-  if (providerId === "codex") return parseCodexLine;
-  if (providerId === "agy") return parseAgyLine;
-  if (providerId === "grok") return parseGrokLine;
-  return null;
+function createLineParser(providerId, onTrace = null) {
+  const parser = { claude: parseClaudeLine, codex: parseCodexLine, agy: parseAgyLine, grok: parseGrokLine }[providerId];
+  if (!parser) return null;
+  if (typeof onTrace !== "function") return parser;
+  const { traceEvents } = require("./chat-trace-events");
+  return (line) => {
+    const parsed = parseJsonLine(line);
+    try {
+      for (const event of traceEvents(providerId, parsed)) onTrace(event);
+    } catch { /* Trace recording must never interrupt an agent run. */ }
+    return parser(line, parsed);
+  };
 }
 
 module.exports = {

@@ -4,6 +4,8 @@
 
 ### English
 
+- Agents can retrieve one another's saved tool activity and results within the same chat, without expanding workspace permissions.
+- Trace storage is capped at 64KiB per run, 1MiB per chat, and 16MiB overall, with seven-day retention and credential redaction.
 - Fixed agent runs stopping at the default 2 MiB cumulative output limit.
 - Chat opens with up to 50 recent messages and loads older history when scrolling upward.
 - Preserved the reading position during history loading and incoming replies; added retry for failed history loads.
@@ -12,6 +14,8 @@
 
 ### 한국어
 
+- 같은 대화방의 에이전트들이 필요할 때 서로의 도구 실행·결과 기록을 조회합니다. 워크스페이스 권한은 유지합니다.
+- 작업 기록을 실행당 64KiB·대화방당 1MiB·전체 16MiB·최대 7일로 제한하고 자격 증명 패턴을 가립니다.
 - 누적 출력이 기본 2MiB 제한을 넘으면 에이전트 실행이 중단되던 문제를 수정했습니다.
 - 최근 대화를 최대 50개씩 표시하고 위로 스크롤하면 이전 기록을 불러옵니다.
 - 이전 기록을 불러오거나 새 답변이 도착해도 읽던 위치를 유지하며, 기록 로딩 실패 시 재시도를 지원합니다.
