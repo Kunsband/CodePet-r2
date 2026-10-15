@@ -36,7 +36,7 @@ for (const providerId of ["claude", "grok"]) {
     assert.notEqual(accounts[0].dir, accounts[1].dir);
     assert.deepEqual(credentials.get(accounts[0].dir), secret("a"));
     assert.deepEqual(credentials.get(accounts[1].dir), secret("b"));
-    assert.equal(fs.realpathSync(path.join(accounts[0].dir, "skills")), path.join(live, "skills"));
+    assert.equal(fs.realpathSync(path.join(accounts[0].dir, "skills")), fs.realpathSync(path.join(live, "skills")));
     assert.match(fs.readFileSync(path.join(accounts[0].dir, config), "utf8"), /custom/);
     if (providerId === "claude") assert.deepEqual(JSON.parse(fs.readFileSync(path.join(accounts[0].dir, config))).permissions.deny, ["Bash"]);
     assert.doesNotMatch(JSON.stringify(service.list()), /secret|fixture-access|fixture-refresh/);
