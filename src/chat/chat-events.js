@@ -195,13 +195,24 @@ function createLineParser(providerId, onTrace = null) {
   if (!parser) return null;
   if (typeof onTrace !== "function") return parser;
   const { traceEvents } = require("./chat-trace-events");
-  return (line) => {
+  const pending = new Set();
+  const tracedParser = (line) => {
     const parsed = parseJsonLine(line);
     try {
-      for (const event of traceEvents(providerId, parsed)) onTrace(event);
+      for (const event of traceEvents(providerId, parsed)) {
+        const write = onTrace(event);
+        if (write?.then) pending.add(write);
+      }
     } catch { /* Trace recording must never interrupt an agent run. */ }
     return parser(line, parsed);
   };
+  tracedParser.flushTraces = () => {
+    if (!pending.size) return null;
+    const writes = [...pending];
+    pending.clear();
+    return Promise.all(writes);
+  };
+  return tracedParser;
 }
 
 module.exports = {

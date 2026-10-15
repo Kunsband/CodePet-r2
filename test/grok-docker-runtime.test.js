@@ -8,7 +8,6 @@ const {
   GrokDockerRuntime,
   GROK_DOCKER_IMAGE,
   GROK_DOCKER_AUTH_VOLUME,
-  GROK_WRITE_MAX_OUTPUT_BYTES,
   dockerCommandCandidates,
   defaultGrokDockerAuthVolume,
   parseAuthDocument,
@@ -52,7 +51,7 @@ test("workspace-write는 읽기 전용 원본과 인증 볼륨 외 호스트 경
   assert.equal(args[args.indexOf("--entrypoint") + 1], "/usr/local/bin/codepet-grok-write");
 });
 
-test("workspace-write 실행은 구조화 변경 세트를 위한 제한된 출력 상한을 쓴다", () => {
+test("workspace-write 실행도 누적 출력량으로 작업을 중단하지 않는다", () => {
   const dockerPath = path.join(HOME, "docker.exe");
   const runtime = new GrokDockerRuntime({
     platform: "win32",
@@ -66,7 +65,7 @@ test("workspace-write 실행은 구조화 변경 세트를 위한 제한된 출�
     grokArgv: ["--allow", "Edit"],
     runId: "r1",
   });
-  assert.equal(execution.maxOutputBytes, GROK_WRITE_MAX_OUTPUT_BYTES);
+  assert.equal(execution.maxOutputBytes, undefined);
   assert.equal(execution.promptTransport, "stdin");
   assert.match(execution.containerName, /^codepet-grok-write-/);
 });

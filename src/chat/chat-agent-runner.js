@@ -10,7 +10,7 @@ const { buildRunDiagnostics, redactSensitiveText } = require("./chat-run-diagnos
 // timeoutMs는 테스트나 명시적인 호출자가 양수를 전달한 경우에만 적용됩니다.
 const DEFAULT_TIMEOUT_MS = null;
 // 정상적인 장기 실행은 누적 로그량으로 종료하지 않습니다.
-// 명시적인 호출자 상한(Docker 변경 manifest 등)은 계속 적용합니다.
+// 테스트 등 명시적인 호출자가 지정한 상한만 적용합니다.
 const DEFAULT_MAX_OUTPUT_BYTES = null;
 const MAX_CAPTURE_CHARS = 2 * 1024 * 1024;
 const MAX_LINE_BYTES = 8 * 1024 * 1024;
@@ -71,6 +71,11 @@ const SANDBOX_BLOCK_PATTERNS = [
 
 function matchApprovalHint(text) {
   if (!text) return null;
+  // Setup failures need sandbox repair, not an approval that disables isolation.
+  if (/helper_sandbox_lock_failed|setup refresh had errors|SetNamedSecurityInfoW.*failed/i.test(text)) return null;
+  if (/a tool required the ["'][^"']+["'] permission that headless mode cannot prompt for, so it was auto-denied/i.test(text)) {
+    return { summary: "명령 실행 승인이 필요합니다." };
+  }
   if (APPROVAL_HINT_PATTERNS.some((pattern) => pattern.test(text))) {
     return { summary: "도구 실행 권한이 필요합니다." };
   }
@@ -312,6 +317,13 @@ function runAgentProcess({
       }
       if (!parseLine) stdout = textTail(stdout, text);
       handleLines(text);
+      const traceWrites = parseLine?.flushTraces?.();
+      if (traceWrites) {
+        // Let the pipe provide backpressure while batched trace writes finish.
+        // Long runs keep their full history without building a memory queue.
+        child.stdout.pause();
+        traceWrites.catch(() => {}).finally(() => { if (!settled) child.stdout.resume(); });
+      }
     });
     child.stderr.on("data", (chunk) => {
       if (!settled) stderr = textTail(stderr, stderrDecoder.write(chunk), MAX_STDERR_BYTES);

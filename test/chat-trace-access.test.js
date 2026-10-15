@@ -55,6 +55,67 @@ test("ordinary answers run once and trace disk failures do not fail the answer",
   assert.equal(result.text, "answer");
 });
 
+test("another provider reads the exact command while the first CLI is still running", async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "codepet-live-trace-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const store = new ChatTraceStore({ root });
+  let commandSeen;
+  const started = new Promise(resolve => { commandSeen = resolve; });
+  let finished = false;
+  const first = runWithTraceAccess({
+    traceStore: store, sessionId: "room", agentId: "codex", runId: "first", prompt: "Run a check",
+    emitEvent: event => { if (event.kind === "status") commandSeen(); },
+    startRun({ prompt, onTrace, onEvent }) {
+      return runAgentProcess({ commandPath: process.execPath, cwd: root, prompt,
+        argv: ["-e", `const fs=require('node:fs');console.log(JSON.stringify({type:'item.started',item:{id:'c1',type:'command_execution',command:'npm test -- --runInBand'}}));const timer=setInterval(()=>{if(fs.existsSync('finish')){clearInterval(timer);console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'done'}}));}},20);process.stdin.resume();`],
+        parseLine: createLineParser("codex", onTrace), onEvent });
+    },
+  });
+  first.promise.then(() => { finished = true; });
+  t.after(() => first.cancel());
+  await started;
+  const prompts = [];
+  const second = await runWithTraceAccess({
+    traceStore: store, sessionId: "room", agentId: "claude", runId: "second", prompt: "Check the ongoing command",
+    startRun({ prompt }) {
+      prompts.push(prompt);
+      return { promise: Promise.resolve({ ok: true, text: prompts.length === 1 ? REQUEST : "verified" }), cancel() {} };
+    },
+  }).promise;
+  assert.equal(second.text, "verified");
+  assert.equal(finished, false);
+  assert.match(prompts[1], /npm test -- --runInBand/);
+  assert.match(prompts[1], /"status":"running"/);
+  await fs.writeFile(path.join(root, "finish"), "done");
+  assert.equal((await first.promise).ok, true);
+});
+
+test("streaming more than 4MiB keeps every tool record with bounded pending writes", async t => {
+  const root = await fs.mkdtemp(path.join(os.tmpdir(), "codepet-full-trace-"));
+  t.after(() => fs.rm(root, { recursive: true, force: true }));
+  const store = new ChatTraceStore({ root });
+  let peakPending = 0;
+  const append = store.append.bind(store);
+  store.append = (entry, records) => {
+    const pending = append(entry, records);
+    peakPending = Math.max(peakPending, entry.pending.reduce((sum, line) => sum + Buffer.byteLength(line), 0));
+    return pending;
+  };
+  const result = await runWithTraceAccess({
+    traceStore: store, sessionId: "room", agentId: "codex", runId: "large", prompt: "run",
+    startRun({ prompt, onTrace, onEvent }) {
+      return runAgentProcess({ commandPath: process.execPath, cwd: root, prompt,
+        argv: ["-e", "process.stdin.resume();for(let i=0;i<4000;i++)console.log(JSON.stringify({type:'item.completed',item:{type:'command_execution',command:'echo '+i,aggregated_output:'x'.repeat(2000),exit_code:0}}));console.log(JSON.stringify({type:'item.completed',item:{type:'agent_message',text:'done'}}));"],
+        parseLine: createLineParser("codex", onTrace), onEvent });
+    },
+  }).promise;
+  assert.equal(result.ok, true);
+  const [entry] = await store.list("room");
+  assert.equal(entry.count, 4000);
+  assert.equal((await store.read("room", { id: entry.id, offset: 3999 })).events[0].command, "echo 3999");
+  assert.ok(peakPending < 512 * 1024, `pending trace bytes: ${peakPending}`);
+});
+
 test("trace continuations retain completed work so the agent can avoid repeating edits", async () => {
   const prompts = [];
   const result = await runWithTraceAccess({
@@ -117,6 +178,8 @@ test("Grok pending workspace changes survive a trace request without another wri
 test("trace requests accept only bounded session-local selectors", () => {
   assert.deepEqual(parseTraceRequest(REQUEST), { agent: "codex" });
   assert.deepEqual(parseTraceRequest('[[CODEPET_TRACE:{"list":true,"offset":4}]]'), { list: true, offset: 4 });
+  assert.deepEqual(parseTraceRequest('[[CODEPET_TRACE:{"agent":"codex","offset":100000}]]'), { agent: "codex", offset: 100000 });
+  assert.deepEqual(parseTraceRequest('[[CODEPET_TRACE:{"agent":"codex","tail":true}]]'), { agent: "codex", tail: true });
   for (const text of [
     `Example: ${REQUEST}`, `\`\`\`\n${REQUEST}\n\`\`\``,
     '[[CODEPET_TRACE:{"id":"../../secrets"}]]', '[[CODEPET_TRACE:{"agent":"codex","sessionId":"other"}]]',

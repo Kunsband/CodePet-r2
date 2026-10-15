@@ -195,6 +195,14 @@ class ProviderProfileStore {
     }
   }
 
+  // Refresh a selected account without changing its key, active account or metadata.
+  updateSecret(key, secret, expectedSecret) {
+    const record = this.get(key);
+    if (!record || JSON.stringify(record.secret) !== JSON.stringify(expectedSecret)) return false;
+    atomicWrite(path.join(this.dir, `${key}.json`), { ...record, secret, updatedAt: new Date().toISOString() });
+    return true;
+  }
+
   delete(key) {
     if (!PROFILE_KEY.test(String(key || ""))) {
       throw new Error("올바르지 않은 계정 키입니다.");
@@ -206,6 +214,9 @@ class ProviderProfileStore {
     const profile = this.get(key);
     if (!profile) throw new Error("저장된 계정을 찾지 못했습니다.");
     fs.rmSync(path.join(this.dir, `${key}.json`), { force: true });
+    const chatRoot = path.resolve(this.root, "chat");
+    const chatProfile = path.resolve(chatRoot, key);
+    if (chatProfile.startsWith(`${chatRoot}${path.sep}`)) fs.rmSync(chatProfile, { recursive: true, force: true });
     return safeProfile(profile, false);
   }
 }

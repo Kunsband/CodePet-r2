@@ -77,7 +77,7 @@ contextBridge.exposeInMainWorld("chatApi", {
   agentConfigure: (sessionId, agentId, patch) =>
     ipcRenderer.invoke(INVOKE.AGENT_CONFIGURE, { sessionId, agentId, patch }),
   accountsList: () => ipcRenderer.invoke(INVOKE.ACCOUNTS_LIST),
-  agentAdd: (sessionId, profileKey, name) => ipcRenderer.invoke(INVOKE.AGENT_ADD, { sessionId, profileKey, name }),
+  agentAdd: (sessionId, profileKey, name, providerId) => ipcRenderer.invoke(INVOKE.AGENT_ADD, { sessionId, profileKey, name, providerId }),
   agentRemove: (sessionId, agentId) => ipcRenderer.invoke(INVOKE.AGENT_REMOVE, { sessionId, agentId }),
 
   attachmentsAdd: (sessionId) => ipcRenderer.invoke(INVOKE.ATTACH_ADD, { sessionId }),

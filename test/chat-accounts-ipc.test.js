@@ -13,11 +13,14 @@ test("saved account participants keep their models, mentions, traces and CLI ide
     modelOptions: [{ id: "base-model" }], permissions: { chat: { supported: true } } };
   t.mock.method(capabilities, "createCapabilityService", () => ({ defs: [base], getRecord: (id) => id === "codex" ? base : null, discover: async () => [base] }));
   const profiles = ["a", "b"].map((key) => ({ key, label: `Account ${key}` }));
+  const sandboxReady = new Set();
   const record = (key) => ({ ...base, modelOptions: [{ id: `model-${key}`, efforts: ["high"] }], models: [`model-${key}`] });
   const accountService = { list: () => profiles, discover: async (key) => record(key), record,
+    prepareSandbox: async key => { await new Promise(resolve => setTimeout(resolve, 5)); sandboxReady.add(`private-${key}`); },
     prepare: (key) => ({ env: { ...process.env, CODEX_HOME: path.join(root, `private-${key}`) } }) };
   const calls = [];
   t.mock.method(runner, "runAgentProcess", (input) => {
+    assert.ok(sandboxReady.delete(path.basename(input.env.CODEX_HOME)), "sandbox preparation must finish before each participant runs");
     calls.push(input);
     input.parseLine(JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "fixture", aggregated_output: "account-trace", exit_code: 0 } }));
     return { promise: Promise.resolve({ ok: true, text: "finished" }), cancel() {} };
@@ -67,8 +70,8 @@ test("saved account participants keep their models, mentions, traces and CLI ide
   assert.deepEqual(calls.slice(1).map((call) => path.basename(call.env.CODEX_HOME)).sort(), ["private-a", "private-b"]);
   assert.ok(calls.every((call) => call.commandPath === "same-cli"));
   assert.doesNotMatch(JSON.stringify(state), /private-a|private-b|auth\.json/);
-  const traceFiles = await fs.readdir(path.join(root, "traces"));
-  const traces = await Promise.all(traceFiles.map(async (file) => JSON.parse((await fs.readFile(path.join(root, "traces", file), "utf8")).split("\n")[0])));
+  const { ChatTraceStore } = require("../src/chat/chat-traces");
+  const traces = await new ChatTraceStore({ root }).list(sessionId);
   assert.deepEqual([...new Set(traces.map((trace) => trace.agentId))].sort(), ["codex-2", "codex-3"]);
   feature.shutdown();
   feature = createChatFeature(options);

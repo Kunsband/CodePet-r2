@@ -2,7 +2,7 @@
 function toolContent(content) {
   if (typeof content === "string") return content;
   if (!Array.isArray(content)) return content;
-  return content.filter((part) => part?.type === "text").slice(0, 8).map((part) => String(part.text || "").slice(0, 12000)).join("\n");
+  return content.filter((part) => part?.type === "text").map((part) => String(part.text || "")).join("\n");
 }
 
 function traceEvents(provider, event) {
@@ -10,7 +10,7 @@ function traceEvents(provider, event) {
   if (provider === "claude" || provider === "grok") {
     const content = event.message?.content;
     if ((event.type === "assistant" || event.type === "user") && Array.isArray(content)) {
-      return content.slice(0, 32).flatMap((block) => {
+      return content.flatMap((block) => {
         if (block?.type === "tool_use") return [{ kind: "tool-call", id: block.id, tool: block.name, input: block.input }];
         if (block?.type === "tool_result") return [{ kind: "tool-result", id: block.tool_use_id, error: Boolean(block.is_error), output: toolContent(block.content) }];
         return [];
@@ -21,12 +21,13 @@ function traceEvents(provider, event) {
   if (provider === "codex") {
     const item = event.item;
     if (item && event.type === "item.completed") {
-      if (item.type === "command_execution") return [{ kind: "tool-result", tool: "shell", command: item.command, output: item.aggregated_output, exitCode: item.exit_code }];
-      if (item.type === "file_change") return [{ kind: "file-change", status: item.status, changes: item.changes?.slice(0, 8).map(({ path, kind }) => ({ path, kind })) }];
+      if (item.type === "command_execution") return [{ kind: "tool-result", id: item.id, tool: "shell", command: item.command, output: item.aggregated_output, exitCode: item.exit_code }];
+      if (item.type === "file_change") return [{ kind: "file-change", id: item.id, status: item.status, changes: item.changes }];
       if (item.type === "mcp_tool_call") return [{ kind: "tool-result", tool: `${item.server}/${item.tool}`, input: item.arguments, output: toolContent(item.result?.content), error: item.error }];
       if (item.type === "web_search") return [{ kind: "tool-result", tool: "web_search", query: item.query }];
     }
-    if (item?.type === "command_execution" && event.type === "item.started") return [{ kind: "tool-call", tool: "shell", command: item.command }];
+    if (item?.type === "command_execution" && event.type === "item.started") return [{ kind: "tool-call", id: item.id, tool: "shell", command: item.command }];
+    if (item?.type === "mcp_tool_call" && event.type === "item.started") return [{ kind: "tool-call", id: item.id, tool: `${item.server}/${item.tool}`, input: item.arguments }];
     if (item?.type === "error" && !/skill descriptions were shortened/i.test(item.message || "")) return [{ kind: "error", message: item.message }];
     if (event.type === "turn.failed" || event.type === "error") return [{ kind: "error", message: event.error?.message || event.message }];
     const msg = event.msg;

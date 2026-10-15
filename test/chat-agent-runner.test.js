@@ -288,6 +288,27 @@ test("실패 진단은 민감정보를 제거하고 provider와 종료 코드를
   assert.doesNotMatch(result.error, /sk-live-1234/);
 });
 
+test("AGY headless auto-denial requests approval even when the CLI exits zero", async () => {
+  const error = 'jetski: no output produced — a tool required the "command" permission that headless mode cannot prompt for, so it was auto-denied.';
+  const result = await runNode(`process.stderr.write(${JSON.stringify(error)})`, { provider: "agy", parseLine: () => null }).promise;
+  assert.equal(result.ok, false);
+  assert.equal(result.approvalRequired, true);
+  assert.match(result.approval.summary, /명령 실행 승인/);
+  assert.equal(result.diagnostics.exitCode, 0);
+});
+
+test("Codex sandbox setup errors do not offer an unsandboxed retry", async () => {
+  for (const error of [
+    "windows sandbox failed: helper_sandbox_lock_failed: SetNamedSecurityInfoW sandbox dir failed: 5",
+    "windows sandbox failed: helper_unknown_error: setup refresh had errors",
+  ]) {
+    const result = await runNode(`process.stderr.write(${JSON.stringify(error)});process.exit(1)`, { provider: "codex" }).promise;
+    assert.equal(result.ok, false);
+    assert.equal(result.approvalRequired, undefined);
+    assert.equal(result.error, error);
+  }
+});
+
 test("file prompt transport does not expose prompt in argv and cleans prompt file", async () => {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), "codepet-prompt-"));
   const script = "const fs=require('fs');const i=process.argv.indexOf('--prompt-file');const p=process.argv[i+1];let stdin='';process.stdin.on('data',d=>stdin+=d);process.stdin.on('end',()=>process.stdout.write(JSON.stringify({text:fs.readFileSync(p,'utf8'),stdin,argv:process.argv.slice(1)})));";

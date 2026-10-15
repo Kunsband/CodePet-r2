@@ -58,7 +58,6 @@ test("Grok workspace-write는 Docker 복제본 실행기로 교체한다", () =>
         commandPath: "docker.exe",
         argv: ["run", "--volume", "D:\\repo:/workspace-src:ro"],
         promptTransport: "stdin",
-        maxOutputBytes: 4 * 1024 * 1024,
       };
     },
   };
@@ -74,7 +73,7 @@ test("Grok workspace-write는 Docker 복제본 실행기로 교체한다", () =>
   });
   assert.equal(execution.commandPath, "docker.exe");
   assert.equal(execution.promptTransport, "stdin");
-  assert.equal(execution.maxOutputBytes, 4 * 1024 * 1024);
+  assert.equal(execution.maxOutputBytes, undefined);
   assert.deepEqual(calls, [{
     workspace: "D:\\repo",
     grokArgv: ["--allow", "Edit"],

@@ -481,6 +481,7 @@ const chatFeature = createChatFeature({
   onWindowReady: () => sendAppearanceToWindows(),
   getAppearance: () => getAppearancePayload(),
   getCodexAccountSwitcher: () => codexAccountSwitcher,
+  getAccountSwitcher: (provider) => ({ claude: claudeAccountSwitcher, agy: antigravityAccountSwitcher, grok: grokAccountSwitcher })[provider],
   openSettings: () => openSettingsWindow(),
   prepareAgent: ({ agent }) => prepareChatAgent(agent),
   grokDockerRuntime,

@@ -1,4 +1,6 @@
 const os = require("node:os");
+const fs = require("node:fs");
+const path = require("node:path");
 const {
   ProviderProfileStore,
   safeProfile,
@@ -7,7 +9,7 @@ const {
   normalizeClaudeAccountMetadata,
   readClaudeAccountMetadata,
 } = require("./claude-account-metadata");
-const { createClaudeFileStore } = require("./claude-live-credentials");
+const { createClaudeFileStore, createClaudeLiveStore } = require("./claude-live-credentials");
 
 class ClaudeAccountSwitcher {
   // liveStore를 넘기지 않으면 파일 저장소를 사용합니다.
@@ -57,6 +59,8 @@ class ClaudeAccountSwitcher {
     const profile = this.listProfiles().find((item) => item.key === key);
     if (!profile) throw new Error("저장된 Claude 계정을 찾지 못했습니다.");
     if (profile.active) throw new Error("현재 사용 중인 계정은 삭제할 수 없습니다.");
+    const configDir = path.join(this.store.root, "chat", profile.key);
+    if (fs.existsSync(configDir)) createClaudeLiveStore({ home: this.home, configDir }).remove();
     return this.store.delete(key);
   }
 

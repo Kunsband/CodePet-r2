@@ -16,7 +16,6 @@ const DOCKER_AUTH_TIMEOUT_MS = 45_000;
 const AUTH_CACHE_MS = 5 * 60_000;
 const MAX_AUTH_DOCUMENT_BYTES = 256 * 1024;
 const MAX_DOCKER_OUTPUT_BYTES = 1024 * 1024;
-const GROK_WRITE_MAX_OUTPUT_BYTES = 4 * 1024 * 1024;
 
 function unique(values) {
   return [...new Set(values.filter(Boolean))];
@@ -380,6 +379,7 @@ class GrokDockerRuntime {
     this.platform = options.platform || process.platform;
     this.env = options.env || process.env;
     this.home = options.home || os.homedir();
+    this.authPath = options.authPath || path.join(this.home, ".grok", "auth.json");
     this.fs = options.fsApi || fs;
     this.runCommand = options.runCommand || defaultRunCommand;
     this.image = options.image || GROK_DOCKER_IMAGE;
@@ -520,7 +520,7 @@ class GrokDockerRuntime {
   readHostAuth() {
     try {
       return parseAuthDocument(
-        this.fs.readFileSync(path.join(this.home, ".grok", "auth.json"), "utf8")
+        this.fs.readFileSync(this.authPath, "utf8")
       );
     } catch {
       return null;
@@ -796,7 +796,6 @@ class GrokDockerRuntime {
       }),
       cwd: cwd || this.tempRoot,
       promptTransport: "stdin",
-      maxOutputBytes: GROK_WRITE_MAX_OUTPUT_BYTES,
       containerName,
       onCancel: () => this.stopContainer(containerName),
     };
@@ -839,7 +838,6 @@ module.exports = {
   GROK_DOCKER_IMAGE,
   GROK_DOCKER_AUTH_VOLUME,
   GROK_DOCKER_LABEL,
-  GROK_WRITE_MAX_OUTPUT_BYTES,
   dockerCommandCandidates,
   dockerEnvironment,
   defaultGrokDockerAuthVolume,

@@ -95,8 +95,8 @@ function codexArgv({ permissionMode, workspace, model, effort, outputFile, image
   return argv;
 }
 
-// agy 1.1.10 검증 플래그 기반 매핑. 위험 플래그(--dangerously-skip-permissions)는
-// 어떤 모드에서도 사용하지 않습니다.
+// agy 1.1.10 검증 플래그 기반 매핑. 자동 승인 플래그는 사용자가 승인한
+// workspace-write 실행에만 추가하며 --sandbox는 유지합니다.
 // - chat: plan 모드(수정 불가) + 샌드박스 + 슬래시 명령 차단
 // - workspace-read: plan 모드 + 샌드박스 + add-dir
 // - workspace-write: accept-edits 모드 + 샌드박스 + add-dir

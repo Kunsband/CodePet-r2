@@ -11,9 +11,11 @@ const { roomAgentsFromCapabilities } = require("./chat-agents");
 const { selectionError } = require("../providers/provider-model-catalog");
 const { ChatRoom, DEFAULT_DISCUSSION_RUN_BUDGET } = require("./chat-room");
 const { CodexChatAccounts, FILE_AUTH_ARGS } = require("./codex-chat-accounts");
+const { SavedChatAccounts } = require("./saved-chat-accounts");
 const { buildAgentInvocation, PERMISSION_MODES, INLINE_TEXT_LIMIT } = require("./chat-argv");
 const { createLineParser } = require("./chat-events");
 const { runAgentProcess } = require("./chat-agent-runner");
+const { withRealPwshPath } = require("./windows-pwsh-path");
 const { ChatTraceStore } = require("./chat-traces");
 const { runWithTraceAccess } = require("./chat-trace-access");
 const { DEFAULT_MAX_MESSAGES } = require("./chat-prompt");
@@ -26,6 +28,7 @@ const {
 } = require("./chat-attachments");
 const { createChatWindow } = require("./chat-window");
 const { formatSessionMarkdown, safeExportFileName } = require("./chat-export");
+
 
 // 채팅 기능 전체(저장소·세션·프로바이더 실행·IPC·창)를 묶는 조립 모듈.
 // main.js는 createChatFeature() 한 번과 openWindow()/shutdown()만 호출합니다.
@@ -129,35 +132,43 @@ function createChatFeature(options) {
   let traceStore = null;
   let storeError = null;
   let capabilityService = null;
-  let codexAccounts = options.codexAccounts || null;
-  function accountService() {
-    if (!codexAccounts && options.getCodexAccountSwitcher) {
-      codexAccounts = new CodexChatAccounts({ switcher: options.getCodexAccountSwitcher() });
-    }
-    return codexAccounts;
+  const accountServices = new Map();
+  const accountProviders = ["codex", "claude", "grok"];
+  function accountService(providerId = "codex") {
+    if (!accountProviders.includes(providerId)) return null;
+    if (accountServices.has(providerId)) return accountServices.get(providerId);
+    const injected = options[`${providerId}Accounts`];
+    const switcher = providerId === "codex" ? options.getCodexAccountSwitcher?.() : options.getAccountSwitcher?.(providerId);
+    const service = injected || (switcher && (providerId === "codex"
+      ? new CodexChatAccounts({ switcher })
+      : new SavedChatAccounts({ providerId, switcher, dockerRuntime: grokDockerRuntime })));
+    if (service) accountServices.set(providerId, service);
+    return service;
   }
 
   function participantRecord(meta, id) {
     const base = ensureCapabilityService().getRecord(id);
     if (base) return base;
     const config = meta?.agents?.[id];
-    if (config?.providerId !== "codex" || !config.profileKey) return null;
-    const service = accountService();
-    const codex = ensureCapabilityService().getRecord("codex");
-    if (!service || !codex) return null;
+    if (!config?.profileKey) return null;
+    const service = accountService(config.providerId);
+    const provider = ensureCapabilityService().getRecord(config.providerId);
+    if (!service || !provider) return null;
     const profile = service.list().find((entry) => entry.key === config.profileKey);
     return {
-      ...service.record(config.profileKey, codex), id, providerId: "codex",
+      ...service.record(config.profileKey, provider), id, providerId: config.providerId,
       name: config.name || id, aliases: [id], accountLabel: profile?.label || "계정 없음",
     };
   }
 
   async function discoverParticipants(meta, force = false) {
-    const service = accountService();
-    if (!service) return;
-    const keys = new Set(Object.values(meta?.agents || {})
-      .filter((config) => config?.providerId === "codex" && config.profileKey).map((config) => config.profileKey));
-    await Promise.all([...keys].map((key) => service.discover(key, ensureCapabilityService().getRecord("codex"), { force })));
+    await Promise.all(accountProviders.map(async (providerId) => {
+      const service = accountService(providerId);
+      if (!service) return;
+      const keys = new Set(Object.values(meta?.agents || {})
+        .filter((config) => config?.providerId === providerId && config.profileKey).map((config) => config.profileKey));
+      await Promise.all([...keys].map((key) => service.discover(key, ensureCapabilityService().getRecord(providerId), { force })));
+    }));
   }
 
   function participantProviders(meta) {
@@ -315,8 +326,9 @@ function createChatFeature(options) {
         prompt: fullPrompt,
         emitEvent,
         startRun: ({ prompt: nextPrompt, onTrace, onEvent }) => {
-          const account = config.profileKey && config.providerId === "codex"
-            ? accountService().prepare(config.profileKey) : null;
+          const service = config.profileKey ? accountService(providerId) : null;
+          const account = service?.prepare(config.profileKey);
+          const docker = providerId === "grok" && config.profileKey && permissionMode !== "chat" ? service.runtime(config.profileKey) : grokDockerRuntime;
           const execution = resolveAgentExecution({
             agentId: providerId,
             permissionMode,
@@ -325,14 +337,14 @@ function createChatFeature(options) {
             workspace: meta.workspace || null,
             chatCwd: store.runtimeChatDir(),
             runId,
-            grokDockerRuntime,
+            grokDockerRuntime: docker,
           });
 
-          return runAgentProcess({
+          const processRun = runAgentProcess({
             commandPath: execution.commandPath,
             needsShell: execution.needsShell,
-            argv: account ? [...execution.argv, ...FILE_AUTH_ARGS] : execution.argv,
-            env: account?.env,
+            argv: account && providerId === "codex" ? [...execution.argv, ...FILE_AUTH_ARGS] : execution.argv,
+            env: providerId === "claude" ? withRealPwshPath(account?.env || process.env) : account?.env,
             prompt: nextPrompt,
             promptTransport: execution.promptTransport,
             promptFileFlag: execution.promptFileFlag,
@@ -346,13 +358,16 @@ function createChatFeature(options) {
             runId,
             onCancel: execution.onCancel,
           });
+          return { ...processRun, promise: processRun.promise.finally(() => account?.finish?.(
+            providerId === "grok" && permissionMode !== "chat" ? docker : null
+          )) };
         },
       });
       return {
         promise: run.promise.then(async (result) => {
           if (!result.ok) return result;
           let workspaceChangeSet = null;
-          if (agent.id === "grok" && permissionMode === "workspace-write") {
+          if (providerId === "grok" && permissionMode === "workspace-write") {
             if (!result.workspaceChangeManifest) {
               throw new Error("Grok이 검증 가능한 변경 세트를 만들지 못했습니다.");
             }
@@ -403,8 +418,16 @@ function createChatFeature(options) {
       runAgent: makeRunAgent(sessionId),
       prepareAgent: async (payload) => {
         const latestMeta = store?.readMeta(sessionId);
-        if (payload?.agent?.id === "grok" && ["workspace-read", "workspace-write"].includes(latestMeta?.permissionMode)) {
-          await grokDockerRuntime.ensureReady();
+        const providerId = payload?.agent?.providerId || payload?.agent?.id;
+        const participant = latestMeta?.agents?.[payload?.agent?.id];
+        if (providerId === "codex" && participant?.profileKey && !participant.autoApprove) {
+          await accountService("codex")?.prepareSandbox?.(participant.profileKey,
+            participantRecord(latestMeta, payload.agent.id), latestMeta.workspace || store.runtimeChatDir());
+        }
+        if ((payload?.agent?.providerId || payload?.agent?.id) === "grok" && ["workspace-read", "workspace-write"].includes(latestMeta?.permissionMode)) {
+          const config = latestMeta.agents?.[payload.agent.id];
+          const docker = config?.profileKey ? accountService("grok").runtime(config.profileKey) : grokDockerRuntime;
+          await docker.ensureReady();
         }
         if (typeof options.prepareAgent === "function") await options.prepareAgent(payload);
       },
@@ -782,7 +805,7 @@ function createChatFeature(options) {
           if (invalidSelection) throw new Error(invalidSelection);
         }
         if (typeof patch?.autoApprove === "boolean") {
-          if (patch.autoApprove && agentId === "grok") {
+          if (patch.autoApprove && (store.readMeta(sessionId)?.agents?.[agentId]?.providerId || agentId) === "grok") {
             throw new Error("Grok 변경은 Docker 복제본 검토 승인을 생략할 수 없습니다.");
           }
           if (patch.autoApprove && meta.permissionMode !== "workspace-write") {
@@ -796,27 +819,51 @@ function createChatFeature(options) {
       })
     );
 
-    ipcMain.handle("chat:accounts:list", wrap(async () => ({ accounts: accountService()?.list() || [] })));
+    ipcMain.handle("chat:accounts:list", wrap(async () => {
+      await ensureCapabilityService().discover();
+      const candidates = accountProviders.flatMap((providerId) => {
+        const base = ensureCapabilityService().getRecord(providerId);
+        if (base?.status !== "cli" || !base.commandPath) return [];
+        return (accountService(providerId)?.list() || []).map((profile) => ({ ...profile, providerId }));
+      });
+      const available = new Array(candidates.length).fill(false);
+      let next = 0;
+      // Bound process count when many logins are saved. Each service caches its catalog.
+      await Promise.all(Array.from({ length: Math.min(2, candidates.length) }, async () => {
+        while (next < candidates.length) {
+          const index = next++;
+          const account = candidates[index];
+          try {
+            const record = await accountService(account.providerId).discover(account.key, ensureCapabilityService().getRecord(account.providerId));
+            available[index] = record.catalogStatus === "ready";
+          } catch { /* Unavailable accounts do not appear in the picker. */ }
+        }
+      }));
+      return { accounts: candidates.filter((_profile, index) => available[index]) };
+    }));
 
-    ipcMain.handle("chat:agent:add", wrap(async ({ sessionId, profileKey, name }) => {
+    ipcMain.handle("chat:agent:add", wrap(async ({ sessionId, profileKey, name, providerId = "codex" }) => {
       requireSession(sessionId);
       if (store.readOnly || store.readMeta(sessionId)?.readOnly) throw new Error("읽기 전용 저장소입니다.");
-      const service = accountService();
-      if (!service?.list().some((profile) => profile.key === profileKey)) throw new Error("저장된 Codex 계정을 선택해 주세요.");
+      const service = accountService(providerId);
+      if (!service?.list().some((profile) => profile.key === profileKey)) throw new Error("저장된 계정을 선택해 주세요.");
+      const duplicate = (config) => config.profileKey === profileKey && config.providerId === providerId;
       const meta = store.readMeta(sessionId);
-      if (Object.values(meta.agents || {}).some((config) => config.profileKey === profileKey)) throw new Error("이 계정은 이미 참여 중입니다.");
+      if (Object.values(meta.agents || {}).some(duplicate)) throw new Error("이 계정은 이미 참여 중입니다.");
       await ensureCapabilityService().discover();
-      const record = await service.discover(profileKey, ensureCapabilityService().getRecord("codex"));
+      const record = await service.discover(profileKey, ensureCapabilityService().getRecord(providerId));
       if (record.catalogStatus !== "ready") throw new Error(record.reason || record.catalogReason);
       // Re-read after async discovery to preserve other configuration edits.
       const latest = store.readMeta(sessionId);
-      if (Object.values(latest.agents || {}).some((config) => config.profileKey === profileKey)) throw new Error("이 계정은 이미 참여 중입니다.");
-      let index = Math.max(2, Number(latest.nextCodexAgentIndex) || 2);
-      while (latest.agents?.[`codex-${index}`]) index += 1;
-      const id = `codex-${index}`;
+      if (!latest || latest.readOnly) throw new Error("세션을 수정할 수 없습니다.");
+      if (Object.values(latest.agents || {}).some(duplicate)) throw new Error("이 계정은 이미 참여 중입니다.");
+      let index = Math.max(2, Number(latest.nextAccountAgentIndex?.[providerId]) || 2,
+        providerId === "codex" ? Number(latest.nextCodexAgentIndex) || 2 : 2);
+      while (latest.agents?.[`${providerId}-${index}`]) index += 1;
+      const id = `${providerId}-${index}`;
       const label = typeof name === "string" ? name.replace(/[\r\n\t]/g, " ").trim().slice(0, 40) : "";
-      store.updateMeta(sessionId, { nextCodexAgentIndex: index + 1, agents: { ...latest.agents, [id]: {
-        providerId: "codex", profileKey, name: label || `Codex ${index}`, enabled: true,
+      store.updateMeta(sessionId, { nextAccountAgentIndex: { ...latest.nextAccountAgentIndex, [providerId]: index + 1 }, agents: { ...latest.agents, [id]: {
+        providerId, profileKey, name: label || `${record.name} ${index}`, enabled: true,
       } } });
       refreshRoomAgents(sessionId);
       return { session: sessionState(sessionId) };

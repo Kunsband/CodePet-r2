@@ -629,6 +629,10 @@ input[type="search"]::placeholder {
   gap: 10px;
 }
 
+.control-grid > .switch-row-wide {
+  grid-column: 1 / -1;
+}
+
 .control-field {
   min-width: 0;
 }

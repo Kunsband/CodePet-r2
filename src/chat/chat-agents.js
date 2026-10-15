@@ -42,7 +42,7 @@ function roomAgentFromCapability(record, config = {}, permissionMode = "chat") {
     version: record.version || "",
     model,
     effort,
-    autoApprove: record.id === "grok" && permissionMode === "workspace-write"
+    autoApprove: (record.providerId || record.id) === "grok" && permissionMode === "workspace-write"
       ? false
       : Boolean(config.autoApprove),
   };

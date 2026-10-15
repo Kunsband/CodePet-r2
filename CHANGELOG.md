@@ -1,5 +1,29 @@
 # Release notes / 릴리즈 노트
 
+## 1.0.9 — 2026-10-15
+
+### English
+
+- Added Claude and Grok accounts as separate chat participants alongside Codex.
+- Unified account selection with independent logins, model choices, mentions, and task traces.
+- Fixed AGY command approval requests being shown as errors, and prevented sandbox setup failures from offering an unsandboxed retry.
+- Fixed Windows sandbox login conflicts between Codex account participants.
+- Fixed Claude's PowerShell execution when using the Microsoft Store version of PowerShell.
+- Aligned the pet and notification settings.
+- Added access to in-progress commands and full tool records, with paged compression instead of trace size limits or automatic expiry.
+- Removed the remaining cumulative output limit from Grok's Docker write runs.
+
+### 한국어
+
+- Codex에 이어 Claude·Grok의 저장 계정도 별도 채팅 참가자로 추가할 수 있습니다.
+- 계정 선택을 하나로 통합하고 로그인·모델 선택·멘션·작업 기록을 참가자별로 구분합니다.
+- AGY 명령 승인 요청이 오류로 표시되는 문제를 수정하고, 샌드박스 초기화 실패 시 격리 해제 재시도를 제안하지 않도록 했습니다.
+- 여러 Codex 계정이 참여할 때 Windows 샌드박스 로그인이 충돌하는 문제를 수정했습니다.
+- Microsoft Store판 PowerShell을 사용할 때 Claude의 명령 실행이 실패하는 문제를 수정했습니다.
+- 펫과 알림 설정의 항목 정렬을 수정했습니다.
+- 실행 중 명령과 전체 도구 기록을 조회할 수 있도록 하고, 기록의 용량·보존 기간 제한을 분할 압축 저장으로 대체했습니다.
+- Grok의 Docker 쓰기 실행에 남아 있던 누적 출력량 제한을 제거했습니다.
+
 ## 1.0.8 — 2026-10-15
 
 ### English

@@ -5,6 +5,7 @@ const { stripCodePetProxyLines } = require("../codex-proxy");
 const { atomicWriteText } = require("../provider-profile-store");
 const { probeCodexModelCatalog } = require("../providers/provider-capabilities");
 const { normalizeCatalog, CATALOG_ERROR } = require("../providers/provider-model-catalog");
+const { CodexWindowsSandboxState } = require("./codex-windows-sandbox");
 
 const digest = (text) => crypto.createHash("sha256").update(text).digest("hex");
 const FILE_AUTH_ARGS = ["-c", "cli_auth_credentials_store=file"];
@@ -16,10 +17,11 @@ function readOptional(file) {
 // Saved login directories are the CLI homes; auth.json is never copied into a
 // chat or renderer. Refreshes remain in the same profile used by account switching.
 class CodexChatAccounts {
-  constructor({ switcher, probe = probeCodexModelCatalog, now = Date.now }) {
+  constructor({ switcher, probe = probeCodexModelCatalog, now = Date.now, platform = process.platform }) {
     this.switcher = switcher;
     this.probe = probe;
     this.now = now;
+    this.windowsSandbox = new CodexWindowsSandboxState({ platform });
     this.cache = new Map();
     this.pending = new Map();
   }
@@ -27,6 +29,7 @@ class CodexChatAccounts {
   list() {
     return this.switcher.listProfiles().filter((profile) => profile.hasAuth).map((profile) => ({
       key: profile.key, label: profile.label || profile.email || profile.key,
+      email: profile.email || null, plan: profile.planType || null,
     }));
   }
 
@@ -77,6 +80,12 @@ class CodexChatAccounts {
     delete env.OPENAI_API_KEY;
     delete env.OPENAI_BASE_URL;
     return { env, profile };
+  }
+
+  async prepareSandbox(key, record, cwd) {
+    const profile = this.switcher.getProfile(key);
+    if (!profile?.hasAuth) throw new Error("저장된 Codex 계정이 없습니다.");
+    await this.windowsSandbox.ensure(profile.homePath, this.switcher.codexHome, record, cwd);
   }
 
   async discover(key, base, { force = false } = {}) {

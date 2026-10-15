@@ -58,7 +58,7 @@ function parseGrokCatalog(output) {
 }
 
 // Metadata handshake only: no user prompt, inference, file tools or MCP servers.
-function probeClaudeModelCatalog(commandPath, needsShell, timeoutMs = 15000) {
+function probeClaudeModelCatalog(commandPath, needsShell, timeoutMs = 15000, options = {}) {
   return new Promise((resolve) => {
     let child;
     let settled = false;
@@ -85,7 +85,7 @@ function probeClaudeModelCatalog(commandPath, needsShell, timeoutMs = 15000) {
     try {
       child = spawn(needsShell ? `"${commandPath}"` : commandPath,
         needsShell ? argv.map((arg) => arg === "" ? '""' : arg) : argv,
-        { shell: Boolean(needsShell), windowsHide: true, stdio: ["pipe", "pipe", "ignore"] });
+        { shell: Boolean(needsShell), windowsHide: true, stdio: ["pipe", "pipe", "ignore"], env: options.env, cwd: options.cwd });
     } catch { finish(null); return; }
     child.on("error", () => finish(null));
     child.on("close", () => finish(null));

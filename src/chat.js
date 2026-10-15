@@ -955,17 +955,20 @@ async function configureAgent(agentId, patch) {
 document.getElementById("btn-add-account").addEventListener("click", async (event) => {
   const anchor = event.currentTarget;
   const sessionId = activeSessionId;
-  const result = await call(window.chatApi.accountsList());
+  anchor.disabled = true;
+  let result;
+  try { result = await call(window.chatApi.accountsList()); }
+  finally { anchor.disabled = false; }
   if (!result || activeSessionId !== sessionId) return;
   openPopover(anchor, (root) => {
     const heading = document.createElement("strong");
-    heading.textContent = "Codex 계정 추가";
+    heading.textContent = "계정 추가";
     root.append(heading);
-    const accounts = result.accounts.filter((account) => !Object.values(sessionMeta?.agents || {}).some((config) => config.profileKey === account.key));
+    const accounts = result.accounts.filter((account) => !Object.values(sessionMeta?.agents || {}).some((config) => config.profileKey === account.key && config.providerId === (account.providerId || "codex")));
     if (!accounts.length) {
       const hint = document.createElement("p");
       hint.className = "popover-hint";
-      hint.textContent = "추가할 계정이 없습니다. 설정 → 계정에서 로그인해 주세요.";
+      hint.textContent = "추가할 계정이 없습니다.";
       const settings = document.createElement("button");
       settings.className = "button";
       settings.textContent = "계정 설정 열기";
@@ -974,19 +977,25 @@ document.getElementById("btn-add-account").addEventListener("click", async (even
       return;
     }
     const select = document.createElement("select");
-    for (const account of accounts) select.append(new Option(account.label, account.key));
+    for (const [index, account] of accounts.entries()) {
+      const provider = providerById(account.providerId || "codex");
+      select.append(new Option(`${account.email || account.label}(${provider?.name || account.providerId || "Codex"})${account.plan ? `(${account.plan})` : ""}`, String(index)));
+    }
     const name = document.createElement("input");
     name.type = "text";
     name.maxLength = 40;
-    name.placeholder = "예: Codex 검토 담당";
-    root.append(makeField("계정", select), makeField("참가자 이름 (선택)", name));
+    name.placeholder = "예: 검토 담당";
+    const accountField = makeField("계정", select);
+    accountField.classList.add("account-picker");
+    root.append(accountField, makeField("참가자 이름 (선택)", name));
     const add = document.createElement("button");
     add.className = "button button-primary";
     add.textContent = "추가";
     add.addEventListener("click", async () => {
       add.disabled = true;
       add.textContent = "모델 확인 중…";
-      const added = await call(window.chatApi.agentAdd(sessionId, select.value, name.value));
+      const account = accounts[Number(select.value)];
+      const added = await call(window.chatApi.agentAdd(sessionId, account.key, name.value, account.providerId || "codex"));
       if (added && activeSessionId === sessionId) { closePopover(); applyFullState(added); }
       add.disabled = false;
       add.textContent = "추가";

@@ -1691,6 +1691,10 @@ textarea:focus-visible {
   background: var(--surface);
 }
 
+.popover:has(.account-picker) { width: min(400px, calc(100vw - 24px)); }
+.popover-field.account-picker { flex-direction: column; align-items: stretch; gap: 5px; }
+.popover-field.account-picker select { width: 100%; max-width: none; }
+
 .popover input[type="text"] {
   width: 100%;
   border: 1px solid var(--line-strong);

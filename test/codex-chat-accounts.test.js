@@ -26,6 +26,17 @@ function fixture(t) {
 }
 const base = { id: "codex", status: "cli", commandPath: "fixture-cli", modelOptions: [{ id: "wrong-account-model" }] };
 
+test("sandbox preparation uses the selected account but model discovery does not initialize Windows users", async (t) => {
+  const { switcher, profiles, codexHome } = fixture(t);
+  const service = new CodexChatAccounts({ switcher, probe: async () => [{ id: "from-cli" }] });
+  const calls = [];
+  service.windowsSandbox.ensure = async (...args) => calls.push(args);
+  await service.discover("a", base);
+  assert.equal(calls.length, 0);
+  await service.prepareSandbox("a", base, "workspace");
+  assert.deepEqual(calls, [[profiles[0].homePath, codexHome, base, "workspace"]]);
+});
+
 test("accounts use distinct CLI homes and preserve live auth, config, trust and AGENTS", async (t) => {
   const { switcher, profiles, codexHome } = fixture(t);
   const originalConfig = fs.readFileSync(path.join(codexHome, "config.toml"), "utf8");
