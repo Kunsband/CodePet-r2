@@ -1,5 +1,17 @@
 # Release notes / 릴리즈 노트
 
+## 1.0.10 — 2026-10-15
+
+### English
+
+- Removed the two-step agent handoff limit and nine-turn discussion limit. Existing stop and interject controls remain available.
+- Enabled follow-up agent calls after group messages, including `@all`.
+
+### 한국어
+
+- 에이전트 간 호출 2단계·토론 9턴 제한을 제거했습니다. 기존 중지·끼어들기는 그대로 사용할 수 있습니다.
+- `@모두` 등 단체 메시지 이후에도 에이전트끼리 후속 작업을 전달할 수 있습니다.
+
 ## 1.0.9 — 2026-10-15
 
 ### English

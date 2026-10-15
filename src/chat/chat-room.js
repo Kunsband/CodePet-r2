@@ -9,12 +9,8 @@ const { extractEmoticons } = require("./chat-emoticons");
 // - 같은 사용자 메시지의 수신자는 같은 대화 스냅숏으로 동시에 시작합니다.
 //   후속 멘션과 토론은 앞 실행이 끝난 뒤 이어집니다.
 // - 에이전트 답변 속 @멘션은 실제 호출입니다: 호출된 에이전트가 이어서
-//   응답합니다. 무한 연쇄는 사용자 발화 기준 연쇄 깊이 상한
-//   (mentionChainLimit, 기본 2)으로 차단합니다. @ 없이 이름만 쓰면 언급입니다.
-// - 에이전트 간 토론은 startDiscussion()으로만, 라운드(1~3)와
-//   총 실행 예산 두 가지 상한 아래에서만 진행됩니다.
-const DEFAULT_DISCUSSION_RUN_BUDGET = 9;
-const DEFAULT_MENTION_CHAIN_LIMIT = 2;
+//   응답합니다. @ 없이 이름만 쓰면 언급입니다.
+// - 토론은 합의/결론, 실행 실패 또는 사용자 중지까지 이어집니다.
 const REPLY_EXCERPT_LIMIT = 200;
 
 let messageSeq = 0;
@@ -75,12 +71,6 @@ class ChatRoom extends EventEmitter {
       permissionMode: "chat",
       ...(options.meta || {}),
     };
-    this.discussionRunBudget = Number.isInteger(options.discussionRunBudget)
-      ? options.discussionRunBudget
-      : DEFAULT_DISCUSSION_RUN_BUDGET;
-    this.mentionChainLimit = Number.isInteger(options.mentionChainLimit)
-      ? options.mentionChainLimit
-      : DEFAULT_MENTION_CHAIN_LIMIT;
     // 브로드캐스트 응답 순서 셔플에 쓰는 난수원. 테스트에서 고정 순서를
     // 만들 수 있도록 주입 가능합니다.
     this.random = typeof options.random === "function" ? options.random : Math.random;
@@ -476,7 +466,7 @@ class ChatRoom extends EventEmitter {
       workMode: Boolean(this.meta.workMode),
       discussion: context.discussion || null,
       broadcast,
-      mentionsEnabled: !context.discussion && !context.parallelBatch && mentionDepth < this.mentionChainLimit,
+      mentionsEnabled: !context.discussion,
     });
 
     let result;
@@ -588,7 +578,7 @@ class ChatRoom extends EventEmitter {
       ...(result.workspaceChangeSet ? { workspaceChangeSet: result.workspaceChangeSet } : {}),
     });
     // 토론 모드는 자체 턴 오케스트레이션이 있으므로 멘션 호출을 만들지 않습니다.
-    if (!context.discussion && !context.parallelBatch) {
+    if (!context.discussion) {
       this.scheduleMentionReplies(
         agent,
         text,
@@ -601,11 +591,9 @@ class ChatRoom extends EventEmitter {
   }
 
   // 에이전트가 @이름으로 부르면 그 에이전트가 실제로 이어서 응답합니다.
-  // 자기 자신은 제외하고, 그룹 별칭 호출은 허용하지 않으며(폭주 방지),
-  // 연쇄 깊이 상한으로 무한 호출을 막습니다.
+  // 자기 자신과 그룹 별칭은 개별 참가자 호출에서 제외합니다.
   scheduleMentionReplies(agent, text, depth, attachments = [], turnRootId = null) {
     if (this.mentionsMuted) return;
-    if (depth >= this.mentionChainLimit) return;
     const mentionedIds = parseMentions(text, this.agents).filter((id) => id !== agent.id);
     let priorityIndex = 0;
     for (const agentId of mentionedIds) {
@@ -643,24 +631,26 @@ class ChatRoom extends EventEmitter {
     }
     this.discussionActive = true;
 
-    const budget = this.discussionRunBudget;
     this.appendSystem(
-      `자율 토론 시작 · ${pool.map((agent) => `@${agent.id}`).join(", ")} · 최대 ${budget}턴`
+      `자율 토론 시작 · ${pool.map((agent) => `@${agent.id}`).join(", ")}`
     );
 
     const generation = this.generation;
     let completed = 0;
     let settled = 0;
     let concluded = false;
+    let failed = false;
     try {
-      for (let turn = 1; turn <= budget; turn += 1) {
+      for (let turn = 1; ; turn += 1) {
         if (generation !== this.generation) break;
         if (this.discussionInterrupted) { concluded = true; break; }
         const agent = pool[(turn - 1) % pool.length];
         const outcome = await this.scheduleResponse(agent, {
-          discussion: { turn, maxTurns: budget },
+          discussion: { turn },
         });
         completed += 1;
+        if (generation !== this.generation) break;
+        if (!outcome?.ok) { failed = true; break; }
         const signal = outcome?.discussionSignal || "CONTINUE";
         if (signal === "CONCLUDE") { concluded = true; break; }
         if (signal === "AGREE" || signal === "PASS") settled += 1;
@@ -671,8 +661,8 @@ class ChatRoom extends EventEmitter {
       if (generation === this.generation) {
         if (this.discussionInterrupted) {
           this.appendSystem("사용자 개입으로 토론을 여기서 마쳤습니다.");
-        } else if (!concluded && completed >= budget) {
-          this.appendSystem(`토론 실행 예산(${budget}회)에 도달해 여기서 마쳤습니다.`);
+        } else if (failed) {
+          this.appendSystem("참가자 실행이 완료되지 않아 토론을 멈췄습니다.");
         } else {
           this.appendSystem("참가자들이 합의하거나 결론에 도달해 토론을 마쳤습니다.");
         }
@@ -685,7 +675,7 @@ class ChatRoom extends EventEmitter {
       this.emitTurnState();
       this.pumpTurnQueue();
     }
-    return { ok: true, completed, truncated: !concluded && completed >= budget, concluded };
+    return { ok: !failed, completed, truncated: false, concluded };
   }
 
   stopAll() {
@@ -730,4 +720,4 @@ class ChatRoom extends EventEmitter {
   }
 }
 
-module.exports = { ChatRoom, describeRunFailure, DEFAULT_DISCUSSION_RUN_BUDGET };
+module.exports = { ChatRoom, describeRunFailure };

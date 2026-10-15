@@ -9,7 +9,7 @@ const {
 const { toDiagnostics } = require("../providers/provider-diagnostics");
 const { roomAgentsFromCapabilities } = require("./chat-agents");
 const { selectionError } = require("../providers/provider-model-catalog");
-const { ChatRoom, DEFAULT_DISCUSSION_RUN_BUDGET } = require("./chat-room");
+const { ChatRoom } = require("./chat-room");
 const { CodexChatAccounts, FILE_AUTH_ARGS } = require("./codex-chat-accounts");
 const { SavedChatAccounts } = require("./saved-chat-accounts");
 const { buildAgentInvocation, PERMISSION_MODES, INLINE_TEXT_LIMIT } = require("./chat-argv");
@@ -514,7 +514,6 @@ function createChatFeature(options) {
       providers: toPublicProviders(records),
       diagnostics: toDiagnostics(records),
       permissionModes: PERMISSION_MODES,
-      discussionMaxTurns: DEFAULT_DISCUSSION_RUN_BUDGET,
       ...sessionsPayload(),
       activeSessionId,
       session: activeSessionId ? sessionState(activeSessionId) : null,

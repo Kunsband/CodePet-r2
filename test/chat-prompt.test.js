@@ -107,9 +107,9 @@ test("토론 컨텍스트가 자율 종료 신호와 함께 들어간다", () =>
     agent: AGENTS[0],
     agents: AGENTS,
     messages: [message("user", "주제", "user")],
-    discussion: { turn: 2, maxTurns: 9 },
+    discussion: { turn: 2 },
   });
-  assert.match(prompt, /자율 토론 2\/9턴/);
+  assert.match(prompt, /자율 토론 2턴/);
   assert.match(prompt, /CODEPET_DISCUSSION:CONCLUDE/);
 });
 

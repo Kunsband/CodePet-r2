@@ -75,7 +75,7 @@ function buildAgentPrompt({
     lines.push(
       `- 다른 참가자를 호출하려면 @이름(${others.map((entry) => `@${entry.id}`).join(", ")})을 쓰세요. 그러면 그 참가자가 이어서 답합니다. 호출 없이 언급만 할 때는 @ 없이 이름만 쓰세요. 호출은 꼭 필요할 때만 하세요.`
     );
-    lines.push("- 한 번에 한 명만 발언합니다. 답을 마치면 사용자에게 결정을 넘기거나, 추가 의견이 꼭 필요할 때만 다른 참가자를 @로 호출해 다음 턴을 넘기세요.");
+    lines.push("- 작업 전달·결과 보고·검토가 필요하면 해당 참가자를 @로 호출해 이어가세요. 후속 호출은 진행 중인 응답이 끝난 뒤 실행됩니다.");
   } else if (others.length > 0) {
     lines.push("- 이번 턴에는 다른 참가자를 추가 호출할 수 없습니다. 다른 참가자를 언급하려면 @ 없이 이름만 쓰세요.");
   }
@@ -96,7 +96,7 @@ function buildAgentPrompt({
   }
   if (discussion) {
     lines.push(
-      `- 지금은 자율 토론 ${discussion.turn}/${discussion.maxTurns}턴입니다. 앞선 답변을 검토해 새 근거가 있을 때만 짧게 기여하세요.`
+      `- 지금은 자율 토론 ${discussion.turn}턴입니다. 앞선 답변을 검토해 새 근거가 있을 때만 짧게 기여하세요.`
     );
     lines.push("- 응답 마지막 줄에 반드시 다음 중 하나만 붙이세요: [[CODEPET_DISCUSSION:CONTINUE]], [[CODEPET_DISCUSSION:AGREE]], [[CODEPET_DISCUSSION:PASS]], [[CODEPET_DISCUSSION:CONCLUDE]].");
     lines.push("- 새 기여는 CONTINUE, 새 내용 없이 동의하면 AGREE, 할 말이 없으면 PASS, 충분한 최종 결론을 제시하면 CONCLUDE를 선택하세요.");

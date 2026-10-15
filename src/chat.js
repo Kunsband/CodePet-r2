@@ -719,7 +719,7 @@ function renderHeader() {
   const discussable = agents.filter((agent) => agent.available && agent.enabled).length >= 2;
   discussionButton.disabled = !discussable;
   discussionButton.title = discussable
-    ? "활성 에이전트들이 정해진 라운드만큼 토론합니다"
+    ? "활성 에이전트들이 합의나 결론에 도달할 때까지 토론합니다"
     : "토론에는 사용 가능한 에이전트가 두 명 이상 필요합니다";
   exportSessionButton.disabled = !activeSessionId;
 }

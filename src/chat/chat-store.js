@@ -296,7 +296,7 @@ class ChatStore {
       workspace: input.workspace || null,
       permissionMode: input.permissionMode || "chat",
       agents: input.agents || {},
-      discussion: { maxTurns: 9, ...(input.discussion || {}) },
+      discussion: { ...(input.discussion || {}) },
       status: "idle",
     };
     fs.mkdirSync(this.attachmentsDir(id), { recursive: true });
