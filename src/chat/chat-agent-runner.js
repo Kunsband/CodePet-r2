@@ -135,6 +135,7 @@ function runAgentProcess({
   argv = [],
   prompt,
   cwd,
+  env,
   timeoutMs = DEFAULT_TIMEOUT_MS,
   platform = process.platform,
   outputFile = null,
@@ -221,6 +222,7 @@ function runAgentProcess({
     try {
       child = spawn(command, args, {
         cwd,
+        env,
         shell: Boolean(needsShell),
         windowsHide: true,
         stdio: ["pipe", "pipe", "pipe"],

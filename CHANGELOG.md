@@ -1,5 +1,21 @@
 # Release notes / 릴리즈 노트
 
+## 1.0.8 — 2026-10-15
+
+### English
+
+- Added Work mode to hide the pet, character avatars, and emotes.
+- Deliver group messages to all selected agents at once and show replies as they finish. Discussions retain turn order.
+- Added separate Codex account participants with independent mentions, model settings, and task traces, using one CLI installation.
+- Applied the existing font-size setting to chat messages and the input.
+
+### 한국어
+
+- 펫과 채팅 캐릭터·이모티콘을 숨기는 회사 모드를 추가했습니다.
+- 여러 수신자에게 같은 메시지를 동시에 전달하고 완료 순서대로 답변을 표시합니다. 토론은 기존 순서를 유지합니다.
+- CLI 추가 설치 없이 Codex 계정별 참가자·멘션·모델 설정·작업 기록을 구분합니다.
+- 기존 글자 크기 설정을 채팅 본문과 입력창에도 적용했습니다.
+
 ## 1.0.7 — 2026-10-14
 
 ### English

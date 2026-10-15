@@ -10,6 +10,7 @@ const { toDiagnostics } = require("../providers/provider-diagnostics");
 const { roomAgentsFromCapabilities } = require("./chat-agents");
 const { selectionError } = require("../providers/provider-model-catalog");
 const { ChatRoom, DEFAULT_DISCUSSION_RUN_BUDGET } = require("./chat-room");
+const { CodexChatAccounts, FILE_AUTH_ARGS } = require("./codex-chat-accounts");
 const { buildAgentInvocation, PERMISSION_MODES, INLINE_TEXT_LIMIT } = require("./chat-argv");
 const { createLineParser } = require("./chat-events");
 const { runAgentProcess } = require("./chat-agent-runner");
@@ -128,6 +129,47 @@ function createChatFeature(options) {
   let traceStore = null;
   let storeError = null;
   let capabilityService = null;
+  let codexAccounts = options.codexAccounts || null;
+  function accountService() {
+    if (!codexAccounts && options.getCodexAccountSwitcher) {
+      codexAccounts = new CodexChatAccounts({ switcher: options.getCodexAccountSwitcher() });
+    }
+    return codexAccounts;
+  }
+
+  function participantRecord(meta, id) {
+    const base = ensureCapabilityService().getRecord(id);
+    if (base) return base;
+    const config = meta?.agents?.[id];
+    if (config?.providerId !== "codex" || !config.profileKey) return null;
+    const service = accountService();
+    const codex = ensureCapabilityService().getRecord("codex");
+    if (!service || !codex) return null;
+    const profile = service.list().find((entry) => entry.key === config.profileKey);
+    return {
+      ...service.record(config.profileKey, codex), id, providerId: "codex",
+      name: config.name || id, aliases: [id], accountLabel: profile?.label || "계정 없음",
+    };
+  }
+
+  async function discoverParticipants(meta, force = false) {
+    const service = accountService();
+    if (!service) return;
+    const keys = new Set(Object.values(meta?.agents || {})
+      .filter((config) => config?.providerId === "codex" && config.profileKey).map((config) => config.profileKey));
+    await Promise.all([...keys].map((key) => service.discover(key, ensureCapabilityService().getRecord("codex"), { force })));
+  }
+
+  function participantProviders(meta) {
+    const records = ensureCapabilityService().defs.map((def) => ensureCapabilityService().getRecord(def.id)).filter(Boolean);
+    for (const id of Object.keys(meta?.agents || {})) {
+      if (!records.some((record) => record.id === id)) {
+        const record = participantRecord(meta, id);
+        if (record) records.push(record);
+      }
+    }
+    return records;
+  }
   const grokDockerRuntime = options.grokDockerRuntime || new GrokDockerRuntime();
   let chatWindow = null;
   let shuttingDown = false;
@@ -213,8 +255,9 @@ function createChatFeature(options) {
 
   function makeRunAgent(sessionId) {
     return ({ agent, prompt, runId, attachments, emitEvent, autoApprove = false }) => {
-      const record = ensureCapabilityService().getRecord(agent.id);
       const meta = store?.readMeta(sessionId);
+      const record = participantRecord(meta, agent.id);
+      const providerId = agent.providerId || agent.id;
       if (!record || !meta) {
         return {
           promise: Promise.resolve({ ok: false, error: "세션 정보를 읽지 못했습니다." }),
@@ -229,7 +272,7 @@ function createChatFeature(options) {
       }));
 
       let outputFile = null;
-      if (agent.id === "codex") {
+      if (providerId === "codex") {
         outputFile = path.join(
           os.tmpdir(),
           `codepet-chat-${agent.id}-${process.pid}-${Date.now()}-${Math.random().toString(36).slice(2)}.txt`
@@ -237,7 +280,7 @@ function createChatFeature(options) {
       }
 
       const invocation = buildAgentInvocation({
-        provider: record,
+        provider: { ...record, id: providerId },
         permissionMode: meta.permissionMode || "chat",
         workspace: meta.workspace || null,
         model: agent.model,
@@ -272,8 +315,10 @@ function createChatFeature(options) {
         prompt: fullPrompt,
         emitEvent,
         startRun: ({ prompt: nextPrompt, onTrace, onEvent }) => {
+          const account = config.profileKey && config.providerId === "codex"
+            ? accountService().prepare(config.profileKey) : null;
           const execution = resolveAgentExecution({
-            agentId: agent.id,
+            agentId: providerId,
             permissionMode,
             invocation,
             record,
@@ -286,17 +331,18 @@ function createChatFeature(options) {
           return runAgentProcess({
             commandPath: execution.commandPath,
             needsShell: execution.needsShell,
-            argv: execution.argv,
+            argv: account ? [...execution.argv, ...FILE_AUTH_ARGS] : execution.argv,
+            env: account?.env,
             prompt: nextPrompt,
             promptTransport: execution.promptTransport,
             promptFileFlag: execution.promptFileFlag,
             cwd: execution.cwd,
             outputFile,
-            parseLine: createLineParser(agent.id, onTrace),
+            parseLine: createLineParser(providerId, onTrace),
             onEvent,
             timeoutMs: options.timeoutMs,
             maxOutputBytes: execution.maxOutputBytes,
-            provider: agent.id,
+            provider: providerId,
             runId,
             onCancel: execution.onCancel,
           });
@@ -329,17 +375,16 @@ function createChatFeature(options) {
   }
 
   function buildRoomAgents(meta) {
-    const records = ensureCapabilityService();
-    const discovered = [];
-    for (const def of records.defs) {
-      const record = records.getRecord(def.id);
-      if (record) discovered.push(record);
-    }
+    const discovered = participantProviders(meta);
     return roomAgentsFromCapabilities(discovered, meta?.agents || {}, meta?.permissionMode || "chat");
   }
 
   function getRoom(sessionId) {
-    if (rooms.has(sessionId)) return rooms.get(sessionId);
+    if (rooms.has(sessionId)) {
+      const existing = rooms.get(sessionId);
+      existing.setMeta({ workMode: Boolean(options.getAppearance?.().workMode) });
+      return existing;
+    }
     if (!ensureStore()) return null;
     const meta = store.readMeta(sessionId);
     if (!meta) return null;
@@ -363,7 +408,7 @@ function createChatFeature(options) {
         }
         if (typeof options.prepareAgent === "function") await options.prepareAgent(payload);
       },
-      meta: { permissionMode: meta.permissionMode || "chat" },
+      meta: { permissionMode: meta.permissionMode || "chat", workMode: Boolean(options.getAppearance?.().workMode) },
     });
 
     room.on("message", (message) => {
@@ -406,6 +451,7 @@ function createChatFeature(options) {
     const page = publicMessagePage(store.readMessagesPage(sessionId));
     return {
       meta: publicMeta(meta),
+      providers: toPublicProviders(participantProviders(meta)),
       agents: room.publicAgents(),
       messages: page.messages,
       history: { before: page.before, hasMore: page.hasMore },
@@ -434,9 +480,14 @@ function createChatFeature(options) {
       store.createSession({});
     }
     const activeSessionId = getActiveSessionId();
+    if (activeSessionId) {
+      await discoverParticipants(store.readMeta(activeSessionId), refreshProviders);
+      refreshRoomAgents(activeSessionId);
+    }
     return {
       // 저장소 문제는 하드 실패가 아니라 경고 배너로 전달합니다.
       error: storeError || null,
+      appearance: options.getAppearance?.(),
       providers: toPublicProviders(records),
       diagnostics: toDiagnostics(records),
       permissionModes: PERMISSION_MODES,
@@ -475,8 +526,11 @@ function createChatFeature(options) {
       "chat:providers:refresh",
       wrap(async () => {
         const records = await ensureCapabilityService().discover({ force: true });
-        for (const sessionId of rooms.keys()) refreshRoomAgents(sessionId);
-        return { providers: toPublicProviders(records), diagnostics: toDiagnostics(records) };
+        for (const sessionId of rooms.keys()) {
+          await discoverParticipants(store.readMeta(sessionId), true);
+          refreshRoomAgents(sessionId);
+        }
+        return { providers: toPublicProviders(participantProviders(store?.readMeta(getActiveSessionId()))), diagnostics: toDiagnostics(records) };
       })
     );
 
@@ -509,6 +563,8 @@ function createChatFeature(options) {
         requireSession(sessionId);
         setActiveSessionId(sessionId);
         await ensureCapabilityService().discover();
+        await discoverParticipants(store.readMeta(sessionId));
+        refreshRoomAgents(sessionId);
         return { ...sessionsPayload(), session: sessionState(sessionId) };
       })
     );
@@ -713,10 +769,9 @@ function createChatFeature(options) {
       "chat:agent:configure",
       wrap(async ({ sessionId, agentId, patch }) => {
         requireSession(sessionId);
-        const service = ensureCapabilityService();
-        const record = service.getRecord(agentId);
-        if (!record) throw new Error("알 수 없는 에이전트입니다.");
         const meta = store.readMeta(sessionId);
+        const record = participantRecord(meta, agentId);
+        if (!record) throw new Error("알 수 없는 에이전트입니다.");
         const current = meta.agents?.[agentId] || {};
         const next = { ...current };
         if (typeof patch?.enabled === "boolean") next.enabled = patch.enabled;
@@ -740,6 +795,46 @@ function createChatFeature(options) {
         return { meta: publicMeta(store.readMeta(sessionId)) };
       })
     );
+
+    ipcMain.handle("chat:accounts:list", wrap(async () => ({ accounts: accountService()?.list() || [] })));
+
+    ipcMain.handle("chat:agent:add", wrap(async ({ sessionId, profileKey, name }) => {
+      requireSession(sessionId);
+      if (store.readOnly || store.readMeta(sessionId)?.readOnly) throw new Error("읽기 전용 저장소입니다.");
+      const service = accountService();
+      if (!service?.list().some((profile) => profile.key === profileKey)) throw new Error("저장된 Codex 계정을 선택해 주세요.");
+      const meta = store.readMeta(sessionId);
+      if (Object.values(meta.agents || {}).some((config) => config.profileKey === profileKey)) throw new Error("이 계정은 이미 참여 중입니다.");
+      await ensureCapabilityService().discover();
+      const record = await service.discover(profileKey, ensureCapabilityService().getRecord("codex"));
+      if (record.catalogStatus !== "ready") throw new Error(record.reason || record.catalogReason);
+      // Re-read after async discovery to preserve other configuration edits.
+      const latest = store.readMeta(sessionId);
+      if (Object.values(latest.agents || {}).some((config) => config.profileKey === profileKey)) throw new Error("이 계정은 이미 참여 중입니다.");
+      let index = Math.max(2, Number(latest.nextCodexAgentIndex) || 2);
+      while (latest.agents?.[`codex-${index}`]) index += 1;
+      const id = `codex-${index}`;
+      const label = typeof name === "string" ? name.replace(/[\r\n\t]/g, " ").trim().slice(0, 40) : "";
+      store.updateMeta(sessionId, { nextCodexAgentIndex: index + 1, agents: { ...latest.agents, [id]: {
+        providerId: "codex", profileKey, name: label || `Codex ${index}`, enabled: true,
+      } } });
+      refreshRoomAgents(sessionId);
+      return { session: sessionState(sessionId) };
+    }));
+
+    ipcMain.handle("chat:agent:remove", wrap(async ({ sessionId, agentId }) => {
+      requireSession(sessionId);
+      if (store.readOnly || store.readMeta(sessionId)?.readOnly) throw new Error("읽기 전용 저장소입니다.");
+      const meta = store.readMeta(sessionId);
+      if (!meta.agents?.[agentId]?.profileKey) throw new Error("추가한 계정 참가자만 삭제할 수 있습니다.");
+      const room = getRoom(sessionId);
+      if (room.turnActive || room.discussionRequested) throw new Error("진행 중인 작업을 마치거나 중지한 후 삭제해 주세요.");
+      const next = { ...meta.agents };
+      delete next[agentId];
+      store.updateMeta(sessionId, { agents: next });
+      refreshRoomAgents(sessionId);
+      return { session: sessionState(sessionId) };
+    }));
 
     ipcMain.handle(
       "chat:attachments:add",

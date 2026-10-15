@@ -207,7 +207,7 @@ function makeMessageEmoticon(folder, emoticon) {
 }
 
 function renderAgentMessageContent(bubble, message) {
-  const folder = AGENT_EMOTICON_FOLDERS[message.author];
+  const folder = AGENT_EMOTICON_FOLDERS[message.agentMeta?.providerId || agentById(message.author)?.providerId || message.author];
   if (!folder || !Array.isArray(message.contentParts)) {
     renderRichText(bubble, message.text);
     return;
@@ -266,6 +266,9 @@ function applyAppearance(appearance) {
   const fontFamily = appearance && appearance.fontFamily;
   if (fontFamily) root.style.setProperty("--user-font", `"${fontFamily}"`);
   else root.style.removeProperty("--user-font");
+  const size = Number(appearance?.fontSize);
+  root.style.setProperty("--chat-font-size", `${size >= 10 && size <= 20 ? Math.round(size) : 12}px`);
+  root.classList.toggle("work-mode", Boolean(appearance?.workMode));
 }
 
 function agentById(id) {
@@ -370,9 +373,10 @@ function closeDoctor() {
 }
 
 function makeAgentAvatar(agent, className = "avatar") {
-  const visual = AGENT_VISUALS[agent?.id];
+  const visual = AGENT_VISUALS[agent?.providerId || agent?.id];
   const avatar = document.createElement("span");
   avatar.className = className;
+  avatar.dataset.initial = (agent?.name || agent?.id || "?").slice(0, 1).toUpperCase();
   avatar.style.setProperty("--agent-color", agent?.color || "#52525b");
   avatar.style.setProperty("--agent-bg", visual?.background || agent?.color || "#e4e4e7");
   if (visual) {
@@ -805,6 +809,12 @@ function openAgentPopover(anchor, agentId) {
       status.textContent = provider.reason || "CLI를 사용할 수 없습니다.";
     }
     root.append(status);
+    if (agent.accountLabel) {
+      const account = document.createElement("p");
+      account.className = "popover-hint";
+      account.textContent = agent.accountLabel;
+      root.append(account);
+    }
 
     // 참가 토글
     const enableToggle = document.createElement("input");
@@ -908,6 +918,19 @@ function openAgentPopover(anchor, agentId) {
       await configureAgent(agentId, { autoApprove: autoApproveToggle.checked });
     });
     root.append(makeField("도구 자동 승인", autoApproveToggle));
+    if (config.profileKey) {
+      const remove = document.createElement("button");
+      remove.type = "button";
+      remove.className = "button";
+      remove.textContent = "참가자 삭제";
+      remove.disabled = Boolean(turnState.current);
+      remove.addEventListener("click", async () => {
+        const sessionId = activeSessionId;
+        const result = await call(window.chatApi.agentRemove(sessionId, agentId));
+        if (result && activeSessionId === sessionId) { closePopover(); applyFullState(result); }
+      });
+      root.append(remove);
+    }
 
     if (provider.status === "gui-only" || provider.status === "absent") {
       const hint = document.createElement("p");
@@ -928,6 +951,49 @@ async function configureAgent(agentId, patch) {
     renderHeader();
   }
 }
+
+document.getElementById("btn-add-account").addEventListener("click", async (event) => {
+  const anchor = event.currentTarget;
+  const sessionId = activeSessionId;
+  const result = await call(window.chatApi.accountsList());
+  if (!result || activeSessionId !== sessionId) return;
+  openPopover(anchor, (root) => {
+    const heading = document.createElement("strong");
+    heading.textContent = "Codex 계정 추가";
+    root.append(heading);
+    const accounts = result.accounts.filter((account) => !Object.values(sessionMeta?.agents || {}).some((config) => config.profileKey === account.key));
+    if (!accounts.length) {
+      const hint = document.createElement("p");
+      hint.className = "popover-hint";
+      hint.textContent = "추가할 계정이 없습니다. 설정 → 계정에서 로그인해 주세요.";
+      const settings = document.createElement("button");
+      settings.className = "button";
+      settings.textContent = "계정 설정 열기";
+      settings.addEventListener("click", () => { closePopover(); window.chatApi.openSettings(); });
+      root.append(hint, settings);
+      return;
+    }
+    const select = document.createElement("select");
+    for (const account of accounts) select.append(new Option(account.label, account.key));
+    const name = document.createElement("input");
+    name.type = "text";
+    name.maxLength = 40;
+    name.placeholder = "예: Codex 검토 담당";
+    root.append(makeField("계정", select), makeField("참가자 이름 (선택)", name));
+    const add = document.createElement("button");
+    add.className = "button button-primary";
+    add.textContent = "추가";
+    add.addEventListener("click", async () => {
+      add.disabled = true;
+      add.textContent = "모델 확인 중…";
+      const added = await call(window.chatApi.agentAdd(sessionId, select.value, name.value));
+      if (added && activeSessionId === sessionId) { closePopover(); applyFullState(added); }
+      add.disabled = false;
+      add.textContent = "추가";
+    });
+    root.append(add);
+  });
+});
 
 // --- 토론 팝오버 ---
 discussionButton.addEventListener("click", () => {
@@ -1265,7 +1331,7 @@ function renderMessage(message) {
   if (message.error) item.classList.add("is-error");
 
   const agent = isUser ? null : agentById(message.author);
-  const name = isUser ? "나" : agent ? agent.name : message.author;
+  const name = isUser ? "나" : agent ? agent.name : message.agentMeta?.name || message.author;
   const color = isUser ? "var(--accent)" : agent ? agent.color : "#52525b";
 
   const body = document.createElement("div");
@@ -1398,7 +1464,7 @@ function renderMessage(message) {
   body.append(meta, bubble);
 
   if (!isUser) {
-    const avatar = makeAgentAvatar(agent || { id: message.author, name, color });
+    const avatar = makeAgentAvatar(agent || { id: message.author, providerId: message.agentMeta?.providerId, name, color });
     item.append(avatar, body);
   } else {
     item.append(body);
@@ -1592,6 +1658,7 @@ function normalizeTurnState(value) {
     : [];
   return {
     current: typeof value?.current === "string" ? value.current : null,
+    currentAgents: Array.isArray(value?.currentAgents) ? value.currentAgents.filter((id) => typeof id === "string") : [],
     queue: normalizeQueue(value?.queue),
     deferred: normalizeQueue(value?.deferred),
   };
@@ -1615,9 +1682,10 @@ function renderTurnQueue() {
   turnCurrent.textContent = "";
   turnCurrent.hidden = !turnState.current;
   if (turnState.current) {
-    const label = currentAgent?.name || `@${turnState.current}`;
+    const currentIds = turnState.currentAgents.length ? turnState.currentAgents : [turnState.current];
+    const label = currentIds.map((id) => agentById(id)?.name || `@${id}`).join(", ");
     turnCurrent.style.setProperty("--turn-agent-color", currentAgent?.color || "#52525b");
-    turnCurrent.append(makeTurnAgentDot(currentAgent), document.createTextNode(`${label} 발언 중`));
+    turnCurrent.append(makeTurnAgentDot(currentAgent), document.createTextNode(`${label} 작업 중`));
   }
 
   turnQueueList.textContent = "";
@@ -1989,6 +2057,7 @@ window.chatApi.onMaximizedState((isMaximized) => {
 
 // --- 상태 적용 ---
 function applyFullState(full) {
+  if (full.appearance) applyAppearance(full.appearance);
   const previousSessionId = activeSessionId;
   if (full.providers) providers = full.providers;
   if (full.diagnostics) diagnostics = full.diagnostics;
@@ -1998,6 +2067,7 @@ function applyFullState(full) {
   if (previousSessionId !== activeSessionId) resetSessionSearchState();
 
   if (full.session) {
+    if (full.session.providers) providers = full.session.providers;
     sessionMeta = full.session.meta;
     agents = full.session.agents || [];
     turnState = normalizeTurnState(full.session.turnState);

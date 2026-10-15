@@ -6,8 +6,8 @@ const { extractEmoticons } = require("./chat-emoticons");
 
 // 채팅방 오케스트레이션.
 // - 멘션이 없으면 세션 참가자 전체, 있으면 멘션된 참가자만 응답합니다.
-// - 모든 에이전트 발화는 방 전체의 단일 턴 큐를 통과합니다. 한 번에
-//   한 명만 말하고, 뒤 순서는 앞 답변이 끝난 뒤 대화 기록을 읽습니다.
+// - 같은 사용자 메시지의 수신자는 같은 대화 스냅숏으로 동시에 시작합니다.
+//   후속 멘션과 토론은 앞 실행이 끝난 뒤 이어집니다.
 // - 에이전트 답변 속 @멘션은 실제 호출입니다: 호출된 에이전트가 이어서
 //   응답합니다. 무한 연쇄는 사용자 발화 기준 연쇄 깊이 상한
 //   (mentionChainLimit, 기본 2)으로 차단합니다. @ 없이 이름만 쓰면 언급입니다.
@@ -94,6 +94,7 @@ class ChatRoom extends EventEmitter {
     this.broadcastPositions = new Map();
     this.turnActive = false;
     this.currentTurn = null;
+    this.currentTurns = [];
     // 사용자가 "잠깐"으로 개입하면 다음 사용자 발화 전까지 에이전트발
     // 멘션 호출을 만들지 않습니다. (현재 발언자의 답변 속 @도 포함)
     this.mentionsMuted = false;
@@ -125,6 +126,8 @@ class ChatRoom extends EventEmitter {
   publicAgents() {
     return this.agents.map((agent) => ({
       id: agent.id,
+      providerId: agent.providerId || agent.id,
+      accountLabel: agent.accountLabel || "",
       name: agent.name,
       color: agent.color,
       aliases: agent.aliases,
@@ -209,11 +212,13 @@ class ChatRoom extends EventEmitter {
         this.scheduleResponse(agent, {
           attachments,
           turnRootId: entry.id,
+          parallelBatch: order.length > 1 ? entry.id : null,
           ...(order.length > 1
-            ? { broadcast: { position: index + 1, total: order.length } }
+            ? { broadcast: { position: index + 1, total: order.length, parallel: true } }
             : {}),
-        }, hasMentions ? { priorityIndex: index } : {});
+        }, { ...(hasMentions ? { priorityIndex: index } : {}), deferPump: true });
       });
+      this.pumpTurnQueue();
     }
     return entry;
   }
@@ -302,7 +307,7 @@ class ChatRoom extends EventEmitter {
       queue.push(item);
     }
     this.emitTurnState();
-    this.pumpTurnQueue();
+    if (!options.deferPump) this.pumpTurnQueue();
     return promise;
   }
 
@@ -315,6 +320,7 @@ class ChatRoom extends EventEmitter {
     });
     return {
       current: this.currentTurn ? this.currentTurn.agent.id : null,
+      currentAgents: this.currentTurns.map((item) => item.agent.id),
       queue: this.turnQueue.map(view),
       deferred: this.deferredTurnQueue.map(view),
     };
@@ -360,25 +366,36 @@ class ChatRoom extends EventEmitter {
     this.turnActive = true;
     try {
       while (this.turnQueue.length > 0) {
-        const item = this.turnQueue.shift();
-        if (item.dedupeKey && this.pendingTurns.get(item.dedupeKey) === item) {
-          this.pendingTurns.delete(item.dedupeKey);
+        const first = this.turnQueue.shift();
+        const batch = [first];
+        while (first.context.parallelBatch && this.turnQueue[0]?.context.parallelBatch === first.context.parallelBatch) {
+          batch.push(this.turnQueue.shift());
         }
-        if (item.generation !== this.generation) {
-          item.resolve(undefined);
-          this.emitTurnState();
-          continue;
-        }
-        this.currentTurn = item;
+        // Read once, before any participant can append its response.
+        const snapshot = first.context.parallelBatch ? this.promptMessages() : null;
+        this.currentTurns = batch;
+        this.currentTurn = first;
         this.emitTurnState();
-        let outcome;
-        try {
-          outcome = await this.respond(item.agent, item.context, item.generation);
-        } catch {
-          outcome = undefined;
-        }
-        this.currentTurn = null;
-        const broadcastRootId = item.context.broadcast && item.context.turnRootId;
+        await Promise.all(batch.map(async (item) => {
+          if (item.dedupeKey && this.pendingTurns.get(item.dedupeKey) === item) {
+            this.pendingTurns.delete(item.dedupeKey);
+          }
+          let outcome;
+          try {
+            outcome = await this.respond(item.agent, {
+              ...item.context,
+              ...(snapshot ? { promptMessages: snapshot } : {}),
+            }, item.generation);
+          } catch {
+            outcome = undefined;
+          } finally {
+            this.currentTurns = this.currentTurns.filter((current) => current !== item);
+            this.currentTurn = this.currentTurns[0] || null;
+            this.emitTurnState();
+            item.resolve(outcome);
+          }
+        }));
+        const broadcastRootId = first.context.broadcast && first.context.turnRootId;
         if (broadcastRootId) {
           const hasRemainingBroadcastTurn = [...this.turnQueue, ...this.deferredTurnQueue]
             .some((queued) => queued.context.broadcast
@@ -386,7 +403,6 @@ class ChatRoom extends EventEmitter {
           if (!hasRemainingBroadcastTurn) this.broadcastPositions.delete(broadcastRootId);
         }
         this.emitTurnState();
-        item.resolve(outcome);
       }
     } finally {
       this.turnActive = false;
@@ -454,12 +470,13 @@ class ChatRoom extends EventEmitter {
     const prompt = buildAgentPrompt({
       agent,
       agents: this.enabledAgents(),
-      messages: this.promptMessages(),
+      messages: context.promptMessages || this.promptMessages(),
       maxMessages: this.maxPromptMessages,
       permissionMode: this.meta.permissionMode,
+      workMode: Boolean(this.meta.workMode),
       discussion: context.discussion || null,
       broadcast,
-      mentionsEnabled: !context.discussion && mentionDepth < this.mentionChainLimit,
+      mentionsEnabled: !context.discussion && !context.parallelBatch && mentionDepth < this.mentionChainLimit,
     });
 
     let result;
@@ -542,9 +559,9 @@ class ChatRoom extends EventEmitter {
       if (match) rawText = rawText.slice(0, match.index).trim();
     }
 
-    const extracted = extractEmoticons(rawText, undefined, agent.id);
+    const extracted = extractEmoticons(rawText, undefined, agent.providerId || agent.id);
     let text = extracted.text;
-    const emoticons = extracted.emoticons;
+    const emoticons = this.meta.workMode ? [] : extracted.emoticons;
     if (context.discussion) {
       if (discussionSignal === "AGREE" && !text) {
         text = "동의합니다.";
@@ -559,6 +576,8 @@ class ChatRoom extends EventEmitter {
       text,
       runId,
       agentMeta: {
+        providerId: agent.providerId || agent.id,
+        name: agent.name,
         model: agent.model || "default",
         effort: agent.effort || "default",
         version: agent.version || "",
@@ -569,7 +588,7 @@ class ChatRoom extends EventEmitter {
       ...(result.workspaceChangeSet ? { workspaceChangeSet: result.workspaceChangeSet } : {}),
     });
     // 토론 모드는 자체 턴 오케스트레이션이 있으므로 멘션 호출을 만들지 않습니다.
-    if (!context.discussion) {
+    if (!context.discussion && !context.parallelBatch) {
       this.scheduleMentionReplies(
         agent,
         text,

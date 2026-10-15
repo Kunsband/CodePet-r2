@@ -479,6 +479,8 @@ const grokDockerRuntime = new GrokDockerRuntime();
 const chatFeature = createChatFeature({
   electron: { ipcMain, dialog, BrowserWindow, shell },
   onWindowReady: () => sendAppearanceToWindows(),
+  getAppearance: () => getAppearancePayload(),
+  getCodexAccountSwitcher: () => codexAccountSwitcher,
   openSettings: () => openSettingsWindow(),
   prepareAgent: ({ agent }) => prepareChatAgent(agent),
   grokDockerRuntime,
@@ -2205,6 +2207,10 @@ function hidePetWindowToTray() {
 
 // 트레이에서 다시 보이기를 누르면 기존 창을 다시 보여주고, 창이 파괴된 상태라면 새로 만듭니다.
 function showPetWindowFromTray() {
+  if (readSettings().workMode) {
+    chatFeature.openWindow();
+    return;
+  }
   if (!petWindow || petWindow.isDestroyed()) {
     petHiddenToTray = false;
     createWindow();
@@ -2385,7 +2391,7 @@ function refreshPetSprite({ force = false } = {}) {
 }
 
 function recoverPetWindowVisuals({ forceSprite = false } = {}) {
-  if (isQuitting || petHiddenToTray || !petWindow || petWindow.isDestroyed()) return false;
+  if (isQuitting || petHiddenToTray || !petWindow || petWindow.isDestroyed() || readSettings().workMode) return false;
 
   try {
     const wasVisible = petWindow.isVisible();
@@ -3285,6 +3291,10 @@ function createWindow() {
     if (didShowPetWindow || !petWindow || petWindow.isDestroyed()) return;
 
     didShowPetWindow = true;
+    if (readSettings().workMode) {
+      hidePetWindowToTray();
+      return;
+    }
     petHiddenToTray = false;
     petWindow.showInactive();
     startMovementLoop({ resetPosition: false });
@@ -3473,6 +3483,14 @@ function registerIpcHandlers() {
     const fonts = await getInstalledFonts();
     const patch = {};
 
+    const previousSettings = readSettings();
+    if (typeof next.workMode === "boolean") {
+      patch.workMode = next.workMode;
+      if (next.workMode && !previousSettings.workMode) {
+        patch.workModeRestorePet = !petHiddenToTray;
+      }
+    }
+
     if (Object.hasOwn(next, "fontFamily")) {
       patch.fontFamily = normalizeFontFamily(next.fontFamily, fonts);
     }
@@ -3502,6 +3520,10 @@ function registerIpcHandlers() {
     }
 
     writeSettings(patch);
+    if (patch.workMode === true) hidePetWindowToTray();
+    else if (patch.workMode === false && previousSettings.workMode && previousSettings.workModeRestorePet !== false) {
+      showPetWindowFromTray();
+    }
     sendAppearanceToWindows();
     refreshTrayMenu();
     return { ok: true, data: await getSettingsData() };
@@ -3659,6 +3681,7 @@ app.on("window-all-closed", () => {
 function getAppearancePayload() {
   const settings = readSettings();
   return {
+    workMode: Boolean(settings.workMode),
     fontFamily: settings.fontFamily || "",
     fontSize: normalizeFontSize(settings.fontSize),
     bubbleBgColor: settings.bubbleBgColor || "",
@@ -3858,12 +3881,7 @@ async function getSettingsData({ forceUsage = false } = {}) {
   const codexAccounts = codexAccountRows();
 
   return {
-    appearance: {
-      fontFamily: settings.fontFamily || "",
-      fontSize: normalizeFontSize(settings.fontSize),
-      bubbleBgColor: settings.bubbleBgColor || "",
-      bubbleTextColor: settings.bubbleTextColor || "",
-    },
+    appearance: getAppearancePayload(),
     pets: pets.map((pet) => ({ key: pet.key, label: pet.label })),
     petKey: resolveSelectedPet()?.key || "",
     activityBubbleMode: settings.activityBubbleMode || "full",

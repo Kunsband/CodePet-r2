@@ -419,6 +419,7 @@ textarea:focus-visible {
 }
 
 .message .bubble {
+  font-size: var(--chat-font-size, 12px);
   background: var(--surface);
   border: 1px solid var(--line);
   border-radius: 4px 14px 14px 14px;
@@ -428,6 +429,24 @@ textarea:focus-visible {
   overflow-wrap: anywhere;
   user-select: text;
 }
+
+#composer-input { font-size: var(--chat-font-size, 12px); }
+.room-actions { flex-wrap: wrap; }
+.popover input[type="text"] { min-width: 0; width: 100%; }
+.turn-current { overflow-wrap: anywhere; }
+.work-mode .message-emoticon,
+.work-mode .agent-avatar img,
+.work-mode .popover-avatar img,
+.work-mode .message .avatar img { display: none; }
+.work-mode .agent-avatar::before,
+.work-mode .popover-avatar::before,
+.work-mode .message .avatar::before { display: none; }
+.work-mode .agent-avatar,
+.work-mode .popover-avatar,
+.work-mode .message .avatar { background: var(--surface); color: var(--ink-soft); }
+.work-mode .agent-avatar:has(img)::after,
+.work-mode .popover-avatar:has(img)::after,
+.work-mode .message .avatar:has(img)::after { content: attr(data-initial); }
 
 .message.is-user {
   flex-direction: row-reverse;

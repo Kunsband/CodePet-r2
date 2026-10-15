@@ -187,6 +187,7 @@ jobs:
     needs: [metadata, build, collect]
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - name: Download the complete release bundle
         uses: actions/download-artifact@v4
         with:
@@ -197,5 +198,7 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           RELEASE_TAG: ${{ needs.metadata.outputs.tag }}
         run: |
+          set -euo pipefail
+          node scripts/release-notes.js > release-notes.md
           gh release upload "$RELEASE_TAG" artifacts/SHA256SUMS --clobber
-          gh release edit "$RELEASE_TAG" --draft=false
+          gh release edit "$RELEASE_TAG" --title "$RELEASE_TAG" --notes-file release-notes.md --draft=false

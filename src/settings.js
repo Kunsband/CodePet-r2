@@ -173,6 +173,7 @@ function renderGeneral({ resetAppearance = false } = {}) {
   $("#bubble-mode").value = state.activityBubbleMode;
   $("#follow").checked = state.followMouse;
   $("#autostart").checked = state.autoStart;
+  $("#work-mode").checked = Boolean(state.appearance.workMode);
 
   const bgVal = state.appearance.bubbleBgColor || "";
   $("#bubble-bg-color").value = bgVal;
@@ -471,6 +472,7 @@ function registerAppearanceControls() {
       const response = await api.save({
         fontFamily: selectedFont || null,
         fontSize: selectedFontSize,
+        workMode: $("#work-mode").checked,
         petKey: $("#pet").value,
         activityBubbleMode: $("#bubble-mode").value,
         followMouse: $("#follow").checked,

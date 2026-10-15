@@ -24,6 +24,9 @@ const INVOKE = Object.freeze({
   WORKSPACE_CLEAR: "chat:workspace:clear",
   PERMISSION_SET: "chat:permission:set",
   AGENT_CONFIGURE: "chat:agent:configure",
+  ACCOUNTS_LIST: "chat:accounts:list",
+  AGENT_ADD: "chat:agent:add",
+  AGENT_REMOVE: "chat:agent:remove",
   ATTACH_ADD: "chat:attachments:add",
   ATTACH_ADD_DROPPED: "chat:attachments:add-dropped",
   ATTACH_ADD_PASTED: "chat:attachments:add-pasted",
@@ -73,6 +76,9 @@ contextBridge.exposeInMainWorld("chatApi", {
     ipcRenderer.invoke(INVOKE.PERMISSION_SET, { sessionId, mode }),
   agentConfigure: (sessionId, agentId, patch) =>
     ipcRenderer.invoke(INVOKE.AGENT_CONFIGURE, { sessionId, agentId, patch }),
+  accountsList: () => ipcRenderer.invoke(INVOKE.ACCOUNTS_LIST),
+  agentAdd: (sessionId, profileKey, name) => ipcRenderer.invoke(INVOKE.AGENT_ADD, { sessionId, profileKey, name }),
+  agentRemove: (sessionId, agentId) => ipcRenderer.invoke(INVOKE.AGENT_REMOVE, { sessionId, agentId }),
 
   attachmentsAdd: (sessionId) => ipcRenderer.invoke(INVOKE.ATTACH_ADD, { sessionId }),
   attachmentsAddDropped: (sessionId, paths) =>

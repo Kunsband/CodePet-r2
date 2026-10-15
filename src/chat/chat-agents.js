@@ -27,6 +27,8 @@ function roomAgentFromCapability(record, config = {}, permissionMode = "chat") {
   const modeSupported = permission?.supported !== false;
   return {
     id: record.id,
+    providerId: record.providerId || record.id,
+    accountLabel: record.accountLabel || "",
     name: record.name,
     color: record.color,
     aliases: [...(record.aliases || [record.id])],

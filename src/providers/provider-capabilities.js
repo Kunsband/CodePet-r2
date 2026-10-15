@@ -16,7 +16,7 @@ const PROBE_TIMEOUT_MS = 5000;
 const MODEL_PROBE_TIMEOUT_MS = 15000;
 const DISCOVERY_TTL_MS = 60 * 1000;
 
-function probeCodexModelCatalog(commandPath, needsShell, timeoutMs = 8000) {
+function probeCodexModelCatalog(commandPath, needsShell, timeoutMs = 8000, options = {}) {
   return new Promise((resolve) => {
     let child;
     let settled = false;
@@ -32,10 +32,12 @@ function probeCodexModelCatalog(commandPath, needsShell, timeoutMs = 8000) {
     const timer = setTimeout(() => finish(null), timeoutMs);
     if (typeof timer.unref === "function") timer.unref();
     try {
-      child = spawn(needsShell ? `"${commandPath}"` : commandPath, ["app-server", "--stdio"], {
+      child = spawn(needsShell ? `"${commandPath}"` : commandPath, ["app-server", "--stdio", ...(options.argv || [])], {
         shell: Boolean(needsShell),
         windowsHide: true,
         stdio: ["pipe", "pipe", "ignore"],
+        env: options.env,
+        cwd: options.cwd,
       });
     } catch {
       finish(null);

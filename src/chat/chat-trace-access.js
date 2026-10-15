@@ -1,4 +1,4 @@
-const { TraceCollector } = require("./chat-traces");
+const { TraceCollector, validTraceAgent } = require("./chat-traces");
 
 const PREFIX = "[[CODEPET_TRACE:";
 const MAX_READS = 3;
@@ -13,7 +13,7 @@ function parseTraceRequest(text) {
     if (request.offset !== undefined && (!Number.isInteger(request.offset) || request.offset < 0 || request.offset > 1024)) return null;
     if (request.list === true && request.id === undefined && request.agent === undefined) return request;
     if (typeof request.id === "string" && /^[0-9a-f-]{36}$/.test(request.id) && request.agent === undefined) return request;
-    if (["codex", "claude", "agy", "grok"].includes(request.agent) && request.id === undefined) return request;
+    if (validTraceAgent(request.agent) && request.id === undefined) return request;
   } catch {}
   return null;
 }

@@ -10,6 +10,9 @@ const RETENTION_MS = 7 * 24 * 60 * 60 * 1000;
 const PAGE_BYTES = 8 * 1024;
 const TRACE_FILE = /^[0-9a-f-]{36}\.jsonl$/;
 const AGENTS = new Set(["codex", "claude", "agy", "grok"]);
+function validTraceAgent(id) {
+  return typeof id === "string" && (AGENTS.has(id) || /^codex-[1-9]\d{0,8}$/.test(id));
+}
 
 function clipUtf8(text, bytes) {
   const buffer = Buffer.from(text);
@@ -122,7 +125,7 @@ class ChatTraceStore {
           const buffer = Buffer.alloc(2048);
           const { bytesRead } = await handle.read(buffer, 0, buffer.length, 0);
           const meta = JSON.parse(buffer.subarray(0, bytesRead).toString("utf8").split("\n")[0]);
-          if (meta.v !== 1 || `${meta.id}.jsonl` !== file.name || !AGENTS.has(meta.agentId)
+          if (meta.v !== 1 || `${meta.id}.jsonl` !== file.name || !validTraceAgent(meta.agentId)
             || typeof meta.sessionId !== "string" || meta.sessionId.length > 100 || !Number.isFinite(meta.ts)
             || !["completed", "failed", "cancelled"].includes(meta.status)
             || !Number.isInteger(meta.count) || meta.count < 0 || meta.count > 256) continue;
@@ -176,7 +179,7 @@ class ChatTraceStore {
 
   save({ sessionId, agentId, runId, status, collector }) {
     return this.serial(async () => {
-      if (!this.hasSession(sessionId) || !AGENTS.has(agentId) || !collector.workEvents) return null;
+      if (!this.hasSession(sessionId) || !validTraceAgent(agentId) || !collector.workEvents) return null;
       const lines = collector.lines();
       const meta = { v: 1, id: randomUUID(), sessionId, agentId, runId: safeText(runId, 200), ts: this.now(), status, count: lines.length, truncated: collector.truncated };
       const data = `${JSON.stringify(meta)}\n${lines.join("")}`;
@@ -234,4 +237,4 @@ class ChatTraceStore {
   }
 }
 
-module.exports = { ChatTraceStore, TraceCollector, safeText, safeValue, RUN_BYTES, SESSION_BYTES, TOTAL_BYTES, RETENTION_MS, PAGE_BYTES };
+module.exports = { ChatTraceStore, TraceCollector, validTraceAgent, safeText, safeValue, RUN_BYTES, SESSION_BYTES, TOTAL_BYTES, RETENTION_MS, PAGE_BYTES };

@@ -48,7 +48,13 @@ test("chat IPC persists traces before the next participant, preserves CLI permis
   assert.equal((await invoke("chat:agent:configure", { sessionId, agentId: "codex", patch: { model: "fixture", effort: "high" } })).ok, false);
   assert.equal((await invoke("chat:agent:configure", { sessionId, agentId: "codex", patch: { model: "fixture", effort: "default" } })).ok, true);
   assert.equal((await invoke("chat:agent:configure", { sessionId, agentId: "codex", patch: { model: "default", effort: "default" } })).ok, true);
-  assert.equal((await invoke("chat:send", { sessionId, text: "@codex @claude 작업 결과를 확인해줘." })).ok, true);
+  assert.equal((await invoke("chat:send", { sessionId, text: "@codex 작업해줘." })).ok, true);
+  for (let i = 0; i < 200; i += 1) {
+    const first = await invoke("chat:state");
+    if (first.session.messages.some((message) => message.author === "codex")) break;
+    await new Promise((resolve) => setTimeout(resolve, 10));
+  }
+  assert.equal((await invoke("chat:send", { sessionId, text: "@claude 앞 작업 결과를 확인해줘." })).ok, true);
   let state;
   for (let i = 0; i < 200; i += 1) {
     state = await invoke("chat:state");

@@ -32,6 +32,39 @@ async function settle(room) {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+test("동시 수신한 답변은 완료 순서대로 표시하고 토론은 모두 완료된 뒤 시작한다", async () => {
+  const releases = new Map();
+  const calls = [];
+  const room = new ChatRoom({ agents: makeAgents(), runAgent: ({ agent, prompt }) => {
+    calls.push(agent.id);
+    if (prompt.includes("자율 토론")) return { promise: Promise.resolve({ ok: true, text: "결론 [[CODEPET_DISCUSSION:CONCLUDE]]" }), cancel() {} };
+    return { promise: new Promise((resolve) => releases.set(agent.id, resolve)), cancel() {} };
+  } });
+  room.sendUserMessage("@모두 작업해");
+  assert.equal(releases.size, 2);
+  const discussion = room.startDiscussion();
+  releases.get("codex")({ ok: true, text: "빠른 완료" });
+  await new Promise((resolve) => setImmediate(resolve));
+  assert.equal(room.messages.at(-1).author, "codex");
+  assert.equal(calls.length, 2);
+  releases.get("claude")({ ok: true, text: "늦은 완료" });
+  await discussion;
+  await settle(room);
+  assert.deepEqual(room.messages.filter((entry) => entry.authorType === "agent").slice(0, 2).map((entry) => entry.text), ["빠른 완료", "늦은 완료"]);
+});
+
+test("회사 모드는 캐릭터 말투와 이모티콘을 요청하거나 저장하지 않는다", async () => {
+  const calls = [];
+  const room = new ChatRoom({ agents: makeAgents(), meta: { workMode: true },
+    runAgent: fakeRunner({ codex: [{ ok: true, text: "검토 완료 [[CODEPET_EMOTE:검토완료]]" }] }, calls) });
+  room.sendUserMessage("@codex 확인해");
+  await settle(room);
+  assert.doesNotMatch(calls[0].prompt, /CODEPET_EMOTE|티격태격|가벼운 도발/);
+  assert.equal(room.messages.at(-1).emoticons, undefined);
+  assert.equal(room.messages.at(-1).contentParts, undefined);
+  assert.equal(room.messages.at(-1).text, "검토 완료");
+});
+
 test("멘션된 에이전트만 응답한다", async () => {
   const calls = [];
   const room = new ChatRoom({
@@ -101,7 +134,7 @@ test("멘션이 없으면 세션에 참여 중인 모든 에이전트가 응답�
   assert.deepEqual(calls.map((call) => call.agentId).sort(), ["claude", "codex"]);
 });
 
-test("여러 에이전트가 답할 때는 한 명씩 차례로, 뒤 순서는 앞 답변을 읽고 답한다", async () => {
+test("여러 수신자는 같은 메시지를 동시에 받고 서로의 미완료 답변을 문맥에 넣지 않는다", async () => {
   const calls = [];
   const room = new ChatRoom({
     agents: makeAgents(),
@@ -118,10 +151,10 @@ test("여러 에이전트가 답할 때는 한 명씩 차례로, 뒤 순서는 �
   await settle(room);
 
   assert.deepEqual(calls.map((call) => call.agentId), ["claude", "codex"]);
-  // 첫 순서는 순차 안내가 없고, 두 번째는 앞 답변이 대화 기록에 있고 반복 금지 안내를 받는다.
-  assert.doesNotMatch(calls[0].prompt, /차례로 답하는 중/);
-  assert.match(calls[1].prompt, /2번째입니다/);
-  assert.match(calls[1].prompt, /첫 번째 의견이야/);
+  for (const call of calls) {
+    assert.match(call.prompt, /동시에 받았습니다/);
+    assert.doesNotMatch(call.prompt, /첫 번째 의견이야|2번째입니다/);
+  }
 });
 
 test("브로드캐스트 응답 순서는 주입한 난수원에 따라 섞인다", async () => {
@@ -137,7 +170,7 @@ test("브로드캐스트 응답 순서는 주입한 난수원에 따라 섞인�
   assert.deepEqual(calls.map((call) => call.agentId), ["codex", "claude"]);
 });
 
-test("방 전체에서 에이전트 실행은 언제나 한 번에 하나뿐이다", async () => {
+test("같은 메시지의 수신자는 앞 응답을 기다리지 않고 실행한다", async () => {
   let active = 0;
   let maxActive = 0;
   const calls = [];
@@ -161,7 +194,7 @@ test("방 전체에서 에이전트 실행은 언제나 한 번에 하나뿐이�
   await settle(room);
 
   assert.deepEqual(calls, ["claude", "codex"]);
-  assert.equal(maxActive, 1);
+  assert.equal(maxActive, 2);
 });
 
 test("브로드캐스트 대기 턴과 멘션 호출이 겹치면 한 턴으로 병합한다", async () => {
@@ -180,7 +213,7 @@ test("브로드캐스트 대기 턴과 멘션 호출이 겹치면 한 턴으로 
   assert.deepEqual(calls.map((call) => call.agentId), ["claude", "codex"]);
 });
 
-test("브로드캐스트의 뒤쪽 대기자를 멘션하면 바로 다음 턴으로 승격한다", async () => {
+test("동시 실행 중인 수신자를 다시 멘션해도 중복 실행하지 않는다", async () => {
   const agents = makeAgents();
   agents[2].available = true;
   const calls = [];
@@ -196,12 +229,11 @@ test("브로드캐스트의 뒤쪽 대기자를 멘션하면 바로 다음 턴�
   room.sendUserMessage("셋 다 의견 줘");
   await settle(room);
 
-  assert.deepEqual(calls.map((call) => call.agentId), ["claude", "agy", "codex"]);
-  assert.match(calls[1].prompt, /2번째입니다/);
-  assert.match(calls[2].prompt, /3번째입니다/);
+  assert.deepEqual(calls.map((call) => call.agentId), ["claude", "codex", "agy"]);
+  assert.ok(calls.every((call) => /동시에 받았습니다/.test(call.prompt)));
 });
 
-test("여러 대기자를 멘션하면 문장에 나온 순서대로 승격한다", async () => {
+test("단독 응답의 여러 멘션은 문장에 나온 순서대로 이어서 실행한다", async () => {
   const agents = makeAgents();
   agents[2].available = true;
   const calls = [];
@@ -214,7 +246,7 @@ test("여러 대기자를 멘션하면 문장에 나온 순서대로 승격한�
       agy: [{ ok: true, text: "AGY 답" }],
     }, calls),
   });
-  room.sendUserMessage("셋 다 의견 줘");
+  room.sendUserMessage("@claude 의견 줘");
   await settle(room);
 
   assert.deepEqual(calls.map((call) => call.agentId), ["claude", "agy", "codex"]);
@@ -234,14 +266,14 @@ test("승격된 턴은 멘션 깊이를 이어받아 연쇄 호출 상한을 지
       agy: [{ ok: true, text: "@codex 다시 답해줘" }],
     }, calls),
   });
-  room.sendUserMessage("셋 다 의견 줘");
+  room.sendUserMessage("@claude 의견 줘");
   await settle(room);
 
-  assert.deepEqual(calls.map((call) => call.agentId), ["claude", "agy", "codex"]);
+  assert.deepEqual(calls.map((call) => call.agentId), ["claude", "agy"]);
   assert.match(calls[1].prompt, /이번 턴에는 다른 참가자를 추가 호출할 수 없습니다/);
 });
 
-test("턴 상태 이벤트는 멘션으로 재정렬된 대기열을 공개한다", async () => {
+test("턴 상태 이벤트는 동시에 작업 중인 모든 참가자를 공개한다", async () => {
   const agents = makeAgents();
   agents[2].available = true;
   const states = [];
@@ -260,11 +292,12 @@ test("턴 상태 이벤트는 멘션으로 재정렬된 대기열을 공개한�
 
   assert.ok(states.some((state) =>
     state.current === "claude"
-    && state.queue.map((turn) => turn.agentId).join(",") === "agy,codex"
+    && state.currentAgents.join(",") === "claude,codex,agy"
+    && state.queue.length === 0
   ));
 });
 
-test("사용자 멘션은 묵은 브로드캐스트 턴보다 앞에 예약한다", async () => {
+test("새 사용자 멘션은 진행 중인 동시 작업 뒤에 실행한다", async () => {
   const agents = makeAgents();
   agents[2].available = true;
   const calls = [];
@@ -288,18 +321,18 @@ test("사용자 멘션은 묵은 브로드캐스트 턴보다 앞에 예약한�
 
   room.sendUserMessage("셋 다 의견 줘");
   await new Promise((resolve) => setImmediate(resolve));
-  assert.deepEqual(calls, ["agy"]);
+  assert.deepEqual(calls, ["agy", "claude", "codex"]);
 
   room.sendUserMessage("@agy 네 말투를 소개해줘");
   assert.ok(states.some((state) =>
     state.current === "agy"
-    && state.queue.map((turn) => turn.agentId).join(",") === "agy,claude,codex"
+    && state.queue.map((turn) => turn.agentId).join(",") === "agy"
   ));
 
   releaseFirst({ ok: true, text: "AGY 첫 답" });
   await settle(room);
 
-  assert.deepEqual(calls, ["agy", "agy", "claude", "codex"]);
+  assert.deepEqual(calls, ["agy", "claude", "codex", "agy"]);
 });
 
 test("사용자 다중 멘션은 문장에 나온 순서를 보존한다", async () => {
@@ -679,7 +712,8 @@ test("중지하면 진행 중인 턴뿐 아니라 전역 큐의 대기 턴도 �
       };
     },
   });
-  room.sendUserMessage("둘 다 답해");
+  room.sendUserMessage("@claude 먼저 답해");
+  room.sendUserMessage("@codex 다음 작업");
   await new Promise((resolve) => setImmediate(resolve));
   room.stopAll();
   await settle(room);
@@ -703,7 +737,8 @@ test("턴 상태는 현재 발언자와 취소 가능한 대기 턴을 공개한
   });
   room.on("turn-state", (state) => states.push(state));
 
-  room.sendUserMessage("둘 다 답해");
+  room.sendUserMessage("@claude 먼저 답해");
+  room.sendUserMessage("@codex 다음 작업");
   await new Promise((resolve) => setImmediate(resolve));
 
   const snapshot = room.turnState();
@@ -719,15 +754,15 @@ test("턴 상태는 현재 발언자와 취소 가능한 대기 턴을 공개한
   assert.equal(states.at(-1).current, null);
 });
 
-test("사용자 개입은 현재 응답과 대기 턴을 함께 중지하고 늦은 결과를 버린다", async () => {
+test("사용자 개입은 동시 실행을 모두 중지하고 늦은 결과를 버린다", async () => {
   const calls = [];
   let cancelled = false;
-  let resolveActive;
   const room = new ChatRoom({
     agents: makeAgents(),
     random: () => 0.99,
     runAgent: ({ agent }) => {
       calls.push(agent.id);
+      let resolveActive;
       return {
         promise: new Promise((resolve) => { resolveActive = resolve; }),
         cancel: () => {
@@ -743,9 +778,9 @@ test("사용자 개입은 현재 응답과 대기 턴을 함께 중지하고 늦
   const result = room.interject();
   await settle(room);
 
-  assert.deepEqual(result, { dropped: 1, interrupted: true });
+  assert.deepEqual(result, { dropped: 0, interrupted: true });
   assert.equal(cancelled, true);
-  assert.deepEqual(calls, ["claude"]);
+  assert.deepEqual(calls, ["claude", "codex"]);
   assert.equal(room.messages.filter((message) => message.authorType === "agent").length, 0);
   assert.equal(room.turnState().queue.length, 0);
   assert.match(room.messages.at(-1).text, /다음 차례는 사용자/);
