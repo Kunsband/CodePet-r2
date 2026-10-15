@@ -222,7 +222,10 @@ textarea:focus-visible {
   font-size: 11.5px;
   color: var(--ink-soft);
   user-select: none;
+  max-width: 220px;
 }
+
+.agent-chip-label { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 
 .agent-avatar,
 .popover-avatar {
@@ -382,6 +385,8 @@ textarea:focus-visible {
   font-weight: 700;
   color: var(--ink-soft);
   font-size: 12px;
+  min-width: 0;
+  overflow-wrap: anywhere;
 }
 
 .message-reply {
@@ -1314,6 +1319,7 @@ textarea:focus-visible {
 .enforcement-hint {
   font-size: 10.5px;
   color: var(--muted);
+  overflow-wrap: anywhere;
 }
 
 .store-warning {
@@ -1641,7 +1647,12 @@ textarea:focus-visible {
   padding: 12px;
   display: grid;
   gap: 8px;
+  max-height: calc(100vh - 16px);
+  overflow-y: auto;
 }
+
+.agent-identity-form { display: grid; gap: 8px; }
+.popover-head strong { min-width: 0; overflow-wrap: anywhere; }
 
 .popover-head {
   display: flex;

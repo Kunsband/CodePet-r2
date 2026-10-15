@@ -1,10 +1,11 @@
 const DEFAULT_MAX_MESSAGES = 40;
 const { emoticonPromptRules } = require("./chat-emoticons");
+const { agentMention } = require("./chat-agent-identity");
 
 function speakerLabel(message, agentsById) {
   if (message.authorType === "user") return message.authorName || "User";
   const agent = agentsById.get(message.author);
-  return `@${agent ? agent.id : message.author}`;
+  return `@${agent ? agentMention(agent) : message.agentMeta?.mention || message.author}`;
 }
 
 function attachmentSuffix(message) {
@@ -27,7 +28,7 @@ function replyPrefix(message, agentsById) {
   if (replyTo.authorType !== "user" && replyTo.authorType !== "agent") return "";
   const label = replyTo.authorType === "user"
     ? "User"
-    : `@${agentsById.get(author)?.id || author}`;
+    : `@${agentMention(agentsById.get(author)) || author}`;
   const quoted = excerpt.replace(/\\/g, "\\\\").replace(/"/g, '\\"');
   return `(인용: ${label} "${quoted}") `;
 }
@@ -61,19 +62,21 @@ function buildAgentPrompt({
 
   const lines = [];
   lines.push(
-    `당신은 여러 AI 코딩 에이전트가 사용자와 함께 있는 그룹 채팅의 참가자 "@${agent.id}"(${agent.name})입니다.`
+    `당신은 여러 AI 코딩 에이전트가 사용자와 함께 있는 그룹 채팅의 참가자 "@${agentMention(agent)}"(${agent.name})입니다.`
   );
-  const roster = ["사용자(User)", ...agents.map((entry) => `@${entry.id}(${entry.name})`)];
+  const roster = ["사용자(User)", ...agents.map((entry) => `@${agentMention(entry)}(${entry.name})`)];
   lines.push(`참가자: ${roster.join(", ")}`);
+  const renamed = agents.filter((entry) => agentMention(entry) !== entry.id);
+  if (renamed.length) lines.push(`작업 기록 조회용 참가자 ID: ${renamed.map((entry) => `@${agentMention(entry)}=${entry.id}`).join(", ")}`);
   lines.push("");
   lines.push("규칙:");
   lines.push("- 아래 대화의 마지막 메시지에 이어 자연스럽게 답하세요.");
   lines.push(
-    `- 출력 전체가 채팅 메시지 하나로 그대로 전송됩니다. "[@${agent.id}]" 같은 접두어나 서명을 붙이지 마세요.`
+    `- 출력 전체가 채팅 메시지 하나로 그대로 전송됩니다. "[@${agentMention(agent)}]" 같은 접두어나 서명을 붙이지 마세요.`
   );
   if (others.length > 0 && mentionsEnabled) {
     lines.push(
-      `- 다른 참가자를 호출하려면 @이름(${others.map((entry) => `@${entry.id}`).join(", ")})을 쓰세요. 그러면 그 참가자가 이어서 답합니다. 호출 없이 언급만 할 때는 @ 없이 이름만 쓰세요. 호출은 꼭 필요할 때만 하세요.`
+      `- 다른 참가자를 호출하려면 @이름(${others.map((entry) => `@${agentMention(entry)}`).join(", ")})을 쓰세요. 그러면 그 참가자가 이어서 답합니다. 호출 없이 언급만 할 때는 @ 없이 이름만 쓰세요. 호출은 꼭 필요할 때만 하세요.`
     );
     lines.push("- 작업 전달·결과 보고·검토가 필요하면 해당 참가자를 @로 호출해 이어가세요. 후속 호출은 진행 중인 응답이 끝난 뒤 실행됩니다.");
   } else if (others.length > 0) {
@@ -112,7 +115,7 @@ function buildAgentPrompt({
   lines.push("=== 대화 끝 ===");
   for (const line of extraLines) lines.push(line);
   lines.push("");
-  lines.push(`지금 "@${agent.id}"로서 답할 차례입니다.`);
+  lines.push(`지금 "@${agentMention(agent)}"로서 답할 차례입니다.`);
   return lines.join("\n");
 }
 

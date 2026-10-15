@@ -16,9 +16,14 @@ function tokenMatchesAlias(token, alias) {
 }
 
 function parseMentions(text, agents, groupAliases = []) {
-  const source = maskNonCallingText(text);
+  const source = maskNonCallingText(text).normalize("NFC");
   const mentioned = [];
   const seen = new Set();
+  // Exact names win over Korean particle matching; longer names win over prefixes.
+  const aliases = [
+    ...groupAliases.map((alias) => ({ alias, group: true })),
+    ...agents.flatMap((agent) => (agent.aliases || []).map((alias) => ({ alias, agent }))),
+  ].sort((left, right) => right.alias.length - left.alias.length);
 
   const add = (agent) => {
     if (!seen.has(agent.id)) {
@@ -32,16 +37,13 @@ function parseMentions(text, agents, groupAliases = []) {
     // 이메일/식별자 안의 @는 호출이 아닙니다. 독립된 @멘션만 허용합니다.
     if (previous && /[\p{L}\p{N}_@-]/u.test(previous)) continue;
     const token = match[1];
-    if (groupAliases.some((alias) => tokenMatchesAlias(token, alias))) {
+    const target = aliases.find(({ alias }) => token.toLowerCase() === alias.toLowerCase())
+      || aliases.find(({ alias }) => tokenMatchesAlias(token, alias));
+    if (target?.group) {
       for (const agent of agents) add(agent);
       continue;
     }
-    for (const agent of agents) {
-      if ((agent.aliases || []).some((alias) => tokenMatchesAlias(token, alias))) {
-        add(agent);
-        break;
-      }
-    }
+    if (target?.agent) add(target.agent);
   }
   return mentioned;
 }

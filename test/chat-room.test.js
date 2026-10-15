@@ -32,6 +32,33 @@ async function settle(room) {
   await new Promise((resolve) => setImmediate(resolve));
 }
 
+test("custom mentions route handoffs by stable ID even if a participant is renamed during a run", async () => {
+  const agents = makeAgents().map((agent, index) => ({ ...agent, name: index === 0 ? "검토 담당" : "작업 담당",
+    mention: index === 0 ? "검토" : "작업", aliases: [index === 0 ? "검토" : "작업", ...agent.aliases] }));
+  let finish;
+  const calls = [];
+  const room = new ChatRoom({ agents, runAgent: ({ agent, prompt }) => {
+    calls.push({ id: agent.id, prompt });
+    return { promise: agent.id === "codex" ? new Promise((resolve) => { finish = resolve; })
+      : Promise.resolve({ ok: true, text: "검토 완료" }), cancel() {} };
+  } });
+  room.sendUserMessage("@작업 확인해");
+  assert.deepEqual(calls.map((call) => call.id), ["codex"]);
+  assert.match(calls[0].prompt, /참가자 "@작업"\(작업 담당\)/);
+  assert.match(calls[0].prompt, /@검토\(검토 담당\)/);
+  assert.match(calls[0].prompt, /@검토=claude/);
+  room.setAgents(agents.map((agent) => agent.id === "claude"
+    ? { ...agent, name: "새 검토 담당", mention: "리뷰", aliases: ["리뷰", "claude"] } : agent));
+  finish({ ok: true, text: "@검토 검토해줘" });
+  await settle(room);
+  assert.deepEqual(calls.map((call) => call.id), ["codex", "claude"]);
+  assert.match(calls[1].prompt, /참가자 "@리뷰"\(새 검토 담당\)/);
+  assert.match(calls[1].prompt, /\[@작업\] @검토 검토해줘/);
+  assert.equal(room.messages.at(-1).author, "claude");
+  assert.equal(room.messages.at(-1).agentMeta.mention, "리뷰");
+  assert.equal(room.publicAgents()[0].mention, "리뷰");
+});
+
 test("동시 수신한 답변은 완료 순서대로 표시하고 토론은 모두 완료된 뒤 시작한다", async () => {
   const releases = new Map();
   const calls = [];

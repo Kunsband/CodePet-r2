@@ -8,6 +8,7 @@ const {
 } = require("../providers/provider-capabilities");
 const { toDiagnostics } = require("../providers/provider-diagnostics");
 const { roomAgentsFromCapabilities } = require("./chat-agents");
+const { identityPatch, aliasKey } = require("./chat-agent-identity");
 const { selectionError } = require("../providers/provider-model-catalog");
 const { ChatRoom } = require("./chat-room");
 const { CodexChatAccounts, FILE_AUTH_ARGS } = require("./codex-chat-accounts");
@@ -157,7 +158,7 @@ function createChatFeature(options) {
     const profile = service.list().find((entry) => entry.key === config.profileKey);
     return {
       ...service.record(config.profileKey, provider), id, providerId: config.providerId,
-      name: config.name || id, aliases: [id], accountLabel: profile?.label || "계정 없음",
+      name: `${provider.name} ${id.slice(config.providerId.length + 1)}`, aliases: [id], accountLabel: profile?.label || "계정 없음",
     };
   }
 
@@ -792,10 +793,12 @@ function createChatFeature(options) {
       wrap(async ({ sessionId, agentId, patch }) => {
         requireSession(sessionId);
         const meta = store.readMeta(sessionId);
+        if (store.readOnly || meta.readOnly) throw new Error("읽기 전용 저장소입니다.");
         const record = participantRecord(meta, agentId);
         if (!record) throw new Error("알 수 없는 에이전트입니다.");
         const current = meta.agents?.[agentId] || {};
         const next = { ...current };
+        Object.assign(next, identityPatch(patch, agentId, buildRoomAgents(meta)));
         if (typeof patch?.enabled === "boolean") next.enabled = patch.enabled;
         if (typeof patch?.model === "string") next.model = patch.model.slice(0, 64);
         if (typeof patch?.effort === "string") next.effort = patch.effort.slice(0, 16);
@@ -858,7 +861,8 @@ function createChatFeature(options) {
       if (Object.values(latest.agents || {}).some(duplicate)) throw new Error("이 계정은 이미 참여 중입니다.");
       let index = Math.max(2, Number(latest.nextAccountAgentIndex?.[providerId]) || 2,
         providerId === "codex" ? Number(latest.nextCodexAgentIndex) || 2 : 2);
-      while (latest.agents?.[`${providerId}-${index}`]) index += 1;
+      const occupiedAliases = new Set(buildRoomAgents(latest).flatMap((agent) => agent.aliases.map(aliasKey)));
+      while (latest.agents?.[`${providerId}-${index}`] || occupiedAliases.has(aliasKey(`${providerId}-${index}`))) index += 1;
       const id = `${providerId}-${index}`;
       const label = typeof name === "string" ? name.replace(/[\r\n\t]/g, " ").trim().slice(0, 40) : "";
       store.updateMeta(sessionId, { nextAccountAgentIndex: { ...latest.nextAccountAgentIndex, [providerId]: index + 1 }, agents: { ...latest.agents, [id]: {

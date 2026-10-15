@@ -1,5 +1,6 @@
 const { EventEmitter } = require("node:events");
 const { GROUP_ALIASES } = require("./chat-agents");
+const { agentMention } = require("./chat-agent-identity");
 const { parseMentions } = require("./chat-mention");
 const { buildAgentPrompt } = require("./chat-prompt");
 const { extractEmoticons } = require("./chat-emoticons");
@@ -119,6 +120,7 @@ class ChatRoom extends EventEmitter {
       providerId: agent.providerId || agent.id,
       accountLabel: agent.accountLabel || "",
       name: agent.name,
+      mention: agentMention(agent),
       color: agent.color,
       aliases: agent.aliases,
       available: Boolean(agent.available),
@@ -182,12 +184,12 @@ class ChatRoom extends EventEmitter {
     for (const agent of targets) {
       if (!agent.available) {
         this.appendSystem(
-          agent.reason || `@${agent.id} (${agent.name})는 이 컴퓨터에서 CLI를 찾지 못했습니다.`
+          agent.reason || `@${agentMention(agent)} (${agent.name})는 이 컴퓨터에서 CLI를 찾지 못했습니다.`
         );
         continue;
       }
       if (agent.enabled === false) {
-        this.appendSystem(`@${agent.id} (${agent.name})는 이 세션에서 비활성화되어 있습니다.`);
+        this.appendSystem(`@${agentMention(agent)} (${agent.name})는 이 세션에서 비활성화되어 있습니다.`);
         continue;
       }
       respondents.push(agent);
@@ -457,9 +459,10 @@ class ChatRoom extends EventEmitter {
       broadcast = { ...broadcast, position };
     }
 
+    const promptAgents = this.enabledAgents();
     const prompt = buildAgentPrompt({
       agent,
-      agents: this.enabledAgents(),
+      agents: promptAgents,
       messages: context.promptMessages || this.promptMessages(),
       maxMessages: this.maxPromptMessages,
       permissionMode: this.meta.permissionMode,
@@ -568,6 +571,7 @@ class ChatRoom extends EventEmitter {
       agentMeta: {
         providerId: agent.providerId || agent.id,
         name: agent.name,
+        mention: agentMention(agent),
         model: agent.model || "default",
         effort: agent.effort || "default",
         version: agent.version || "",
@@ -584,7 +588,8 @@ class ChatRoom extends EventEmitter {
         text,
         mentionDepth,
         context.attachments || [],
-        context.turnRootId
+        context.turnRootId,
+        promptAgents
       );
     }
     return { ok: true, discussionSignal };
@@ -592,9 +597,9 @@ class ChatRoom extends EventEmitter {
 
   // 에이전트가 @이름으로 부르면 그 에이전트가 실제로 이어서 응답합니다.
   // 자기 자신과 그룹 별칭은 개별 참가자 호출에서 제외합니다.
-  scheduleMentionReplies(agent, text, depth, attachments = [], turnRootId = null) {
+  scheduleMentionReplies(agent, text, depth, attachments = [], turnRootId = null, routingAgents = this.agents) {
     if (this.mentionsMuted) return;
-    const mentionedIds = parseMentions(text, this.agents).filter((id) => id !== agent.id);
+    const mentionedIds = parseMentions(text, routingAgents).filter((id) => id !== agent.id);
     let priorityIndex = 0;
     for (const agentId of mentionedIds) {
       const target = this.findAgent(agentId);
@@ -632,7 +637,7 @@ class ChatRoom extends EventEmitter {
     this.discussionActive = true;
 
     this.appendSystem(
-      `자율 토론 시작 · ${pool.map((agent) => `@${agent.id}`).join(", ")}`
+      `자율 토론 시작 · ${pool.map((agent) => `@${agentMention(agent)}`).join(", ")}`
     );
 
     const generation = this.generation;

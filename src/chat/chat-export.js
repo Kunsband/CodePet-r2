@@ -19,16 +19,14 @@ function formatDateTime(value) {
   return `${year}-${month}-${day} ${hours}:${minutes}`;
 }
 
-function messageAuthorLabel(message) {
+function messageAuthorLabel(message, agents = {}) {
   if (message?.authorType === "user") return "사용자";
   const author = compactLine(message?.author);
-  return author ? `@${author}` : "에이전트";
-}
-
-function replyAuthorLabel(replyTo) {
-  if (replyTo?.authorType === "user") return "사용자";
-  const author = compactLine(replyTo?.author);
-  return author ? `@${author}` : "에이전트";
+  if (!author) return "에이전트";
+  const identity = agents[author] || message?.agentMeta || {};
+  const name = compactLine(identity.name);
+  const mention = compactLine(identity.mention) || author;
+  return name ? `${name} (@${mention})` : `@${mention}`;
 }
 
 function attachmentLines(attachments) {
@@ -46,18 +44,18 @@ function attachmentLines(attachments) {
   return lines;
 }
 
-function formatReplyBlock(replyTo) {
+function formatReplyBlock(replyTo, agents) {
   if (!replyTo || typeof replyTo !== "object" || Array.isArray(replyTo)) return "";
   const excerpt = compactLine(replyTo.excerpt);
   if (!excerpt) return "";
   return [
-    `> 인용: ${escapeInlineMarkdown(replyAuthorLabel(replyTo))}`,
+    `> 인용: ${escapeInlineMarkdown(messageAuthorLabel(replyTo, agents))}`,
     ">",
     `> ${escapeInlineMarkdown(excerpt)}`,
   ].join("\n");
 }
 
-function formatMessage(message) {
+function formatMessage(message, agents) {
   const time = formatDateTime(message?.ts);
   const text = String(message?.text || "").trim();
 
@@ -67,9 +65,9 @@ function formatMessage(message) {
   }
 
   const blocks = [
-    `### ${escapeInlineMarkdown(messageAuthorLabel(message))} (${time})`,
+    `### ${escapeInlineMarkdown(messageAuthorLabel(message, agents))} (${time})`,
   ];
-  const replyBlock = formatReplyBlock(message?.replyTo);
+  const replyBlock = formatReplyBlock(message?.replyTo, agents);
   if (replyBlock) blocks.push(replyBlock);
   if (text) blocks.push(text);
 
@@ -88,7 +86,7 @@ function formatSessionMarkdown(meta = {}, messages = []) {
   ];
   const entries = Array.isArray(messages) ? messages.filter(Boolean) : [];
   if (entries.length === 0) sections.push("_메시지가 없습니다._");
-  else sections.push(...entries.map(formatMessage));
+  else sections.push(...entries.map((message) => formatMessage(message, meta.agents)));
   return `${sections.join("\n\n")}\n`;
 }
 

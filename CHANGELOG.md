@@ -1,5 +1,15 @@
 # Release notes / 릴리즈 노트
 
+## 1.0.11 — 2026-10-15
+
+### English
+
+- Added per-chat display names and `@mentions` for all participants, including saved accounts. Original mentions continue to work.
+
+### 한국어
+
+- 기본·추가 계정 참가자의 표시 이름과 `@호출명`을 대화방별로 변경할 수 있습니다. 기존 호출명도 계속 사용할 수 있습니다.
+
 ## 1.0.10 — 2026-10-15
 
 ### English

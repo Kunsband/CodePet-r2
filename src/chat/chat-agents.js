@@ -2,7 +2,7 @@
 // CLI 탐지/검증은 src/providers/provider-capabilities.js 한 곳에서만 수행하고,
 // 이 모듈은 탐지 결과(capability record)와 세션별 설정을 방 참가자로 합칩니다.
 
-const GROUP_ALIASES = Object.freeze(["all", "everyone", "모두", "전원", "얘들아"]);
+const { GROUP_ALIASES } = require("./chat-agent-identity");
 const { selectionError } = require("../providers/provider-model-catalog");
 
 function concreteModelOptions(record) {
@@ -29,9 +29,10 @@ function roomAgentFromCapability(record, config = {}, permissionMode = "chat") {
     id: record.id,
     providerId: record.providerId || record.id,
     accountLabel: record.accountLabel || "",
-    name: record.name,
+    name: config.name || record.name,
+    mention: config.mention || record.id,
     color: record.color,
-    aliases: [...(record.aliases || [record.id])],
+    aliases: [...new Set([config.mention || record.id, record.id, ...(record.aliases || [])])],
     available: record.status === "cli" && modeSupported && !invalidSelection,
     enabled: config.enabled !== false,
     reason: modeSupported

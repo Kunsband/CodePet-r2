@@ -38,7 +38,7 @@ Install and sign in to the CLIs you want to use: `codex`, `claude`, `agy`, or `g
 - **Multiple accounts:** Save Codex, Claude, or Grok accounts in Settings, then choose **Add account** (`계정 추가`) in the chat. Available accounts appear as `email(agent)(plan)`. Each participant has its own mention, model, reasoning setting, and task traces. One CLI installation per service is enough. Default participants use the currently active account; disable them if that duplicates a saved participant.
 - **Appearance:** The existing font-size setting also applies to chat messages and the input. Enable **Work mode** (`회사 모드`) in Settings to hide the pet, character avatars, and emotes; open chat from the tray.
 - **Discussion:** Agents take turns until they agree or conclude, without a turn limit. Use Stop or Interject to end the discussion.
-- **Per-agent settings:** Choose participation, model, reasoning effort, and tool auto-approval from each participant chip. Model and reasoning choices come from the installed CLI; agents cannot run if their model list cannot be retrieved. Unspecified settings follow the CLI configuration.
+- **Per-agent settings:** Choose participation, model, reasoning effort, and tool auto-approval from each participant chip. You can also change the display name and `@mention` for each chat. Original mentions still work. Model and reasoning choices come from the installed CLI; agents cannot run if their model list cannot be retrieved. Unspecified settings follow the CLI configuration.
 - **Messages:** Live partial responses, quote replies, code blocks with copy buttons, formatted text, links, and character emotes.
 
 ### Workspaces and permissions

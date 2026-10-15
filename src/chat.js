@@ -63,6 +63,7 @@ const typingAgents = new Set();
 const liveRuns = new Map(); // runId → { item, textEl, statusEl, text }
 const historyLoadButton = document.getElementById("history-load");
 const displayedMessageIds = new Set();
+const messageLabelData = new WeakMap();
 let historyBefore = null;
 let historyHasMore = false;
 let historyLoading = false;
@@ -273,6 +274,10 @@ function applyAppearance(appearance) {
 
 function agentById(id) {
   return agents.find((agent) => agent.id === id) || null;
+}
+
+function agentMention(agent) {
+  return agent?.mention || agent?.id || "";
 }
 
 function providerById(id) {
@@ -711,7 +716,7 @@ function renderHeader() {
     if (provider.status !== "cli") continue;
     const info = provider.permissions?.[mode];
     if (info) {
-      hints.push(`${provider.name}: ${ENFORCEMENT_LABEL[info.enforcement] || info.enforcement}`);
+      hints.push(`${agentById(provider.id)?.name || provider.name}: ${ENFORCEMENT_LABEL[info.enforcement] || info.enforcement}`);
     }
   }
   enforcementHint.textContent = hints.length > 0 ? `적용 방식 — ${hints.join(" · ")}` : "";
@@ -737,12 +742,15 @@ function renderAgents() {
     if (typingAgents.has(agent.id)) chip.classList.add("is-typing");
     chip.title = agent.available
       ? agent.enabled
-        ? "클릭해 모델/추론 설정"
+        ? `${agent.name} · 클릭해 이름/모델/추론 설정`
         : "이 세션에서 비활성화됨 · 클릭해 설정"
       : agent.reason || "CLI를 찾지 못했습니다";
 
     const avatar = makeAgentAvatar(agent, "agent-avatar");
-    chip.append(avatar, document.createTextNode(`@${agent.id}`));
+    const label = document.createElement("span");
+    label.className = "agent-chip-label";
+    label.textContent = `@${agentMention(agent)}`;
+    chip.append(avatar, label);
     chip.addEventListener("click", () => openAgentPopover(chip, agent.id));
     agentChips.append(chip);
   }
@@ -785,6 +793,7 @@ function makeField(labelText, control) {
 }
 
 function openAgentPopover(anchor, agentId) {
+  const sessionId = activeSessionId;
   const agent = agentById(agentId);
   const provider = providerById(agentId);
   if (!agent || !provider) return;
@@ -795,7 +804,7 @@ function openAgentPopover(anchor, agentId) {
     head.className = "popover-head";
     const dot = makeAgentAvatar(agent, "popover-avatar");
     const name = document.createElement("strong");
-    name.textContent = `${agent.name} (@${agent.id})`;
+    name.textContent = `${agent.name} (@${agentMention(agent)})`;
     head.append(dot, name);
     root.append(head);
 
@@ -815,6 +824,37 @@ function openAgentPopover(anchor, agentId) {
       account.textContent = agent.accountLabel;
       root.append(account);
     }
+
+    const identityForm = document.createElement("form");
+    identityForm.className = "agent-identity-form";
+    const nameInput = document.createElement("input");
+    nameInput.type = "text";
+    nameInput.maxLength = 40;
+    nameInput.value = agent.name;
+    nameInput.placeholder = provider.name;
+    const mentionInput = document.createElement("input");
+    mentionInput.type = "text";
+    mentionInput.maxLength = 41;
+    mentionInput.value = agentMention(agent);
+    mentionInput.placeholder = agent.id;
+    mentionInput.spellcheck = false;
+    const saveIdentity = document.createElement("button");
+    saveIdentity.type = "submit";
+    saveIdentity.className = "button popover-submit";
+    saveIdentity.textContent = "이름 저장";
+    identityForm.append(makeField("표시 이름", nameInput), makeField("호출명 (@)", mentionInput), saveIdentity);
+    identityForm.addEventListener("keydown", (event) => {
+      if (event.key === "Enter" && event.isComposing) event.preventDefault();
+    });
+    identityForm.addEventListener("submit", async (event) => {
+      event.preventDefault();
+      if (activeSessionId !== sessionId) return;
+      saveIdentity.disabled = true;
+      const result = await configureAgent(agentId, { name: nameInput.value, mention: mentionInput.value });
+      saveIdentity.disabled = false;
+      if (result && activeSessionId === sessionId && identityForm.isConnected) closePopover();
+    });
+    root.append(identityForm);
 
     // 참가 토글
     const enableToggle = document.createElement("input");
@@ -945,11 +985,13 @@ function openAgentPopover(anchor, agentId) {
 }
 
 async function configureAgent(agentId, patch) {
-  const result = await call(window.chatApi.agentConfigure(activeSessionId, agentId, patch));
-  if (result?.meta) {
+  const sessionId = activeSessionId;
+  const result = await call(window.chatApi.agentConfigure(sessionId, agentId, patch));
+  if (result?.meta && activeSessionId === sessionId) {
     sessionMeta = result.meta;
     renderHeader();
   }
+  return result;
 }
 
 document.getElementById("btn-add-account").addEventListener("click", async (event) => {
@@ -1027,7 +1069,7 @@ discussionButton.addEventListener("click", () => {
       checkbox.checked = true;
       checkbox.dataset.agentId = agent.id;
       checkboxes.push(checkbox);
-      root.append(makeField(`@${agent.id} (${agent.name})`, checkbox));
+      root.append(makeField(`@${agentMention(agent)} (${agent.name})`, checkbox));
     }
 
     const startBtn = document.createElement("button");
@@ -1277,13 +1319,15 @@ function normalizeReplySnapshot(value) {
 function replyAuthorLabel(replyTo) {
   if (replyTo.authorType === "user") return "나";
   const agent = agentById(replyTo.author);
-  return agent ? `${agent.name} · @${agent.id}` : `@${replyTo.author}`;
+  return agent ? `${agent.name} · @${agentMention(agent)}` : `@${replyTo.author}`;
 }
 
 function makeReplyContext(replyTo) {
   const context = document.createElement("aside");
   context.className = "reply-context";
   const author = document.createElement("strong");
+  author.dataset.replyAuthor = replyTo.author;
+  author.dataset.replyAuthorType = replyTo.authorType;
   author.textContent = replyAuthorLabel(replyTo);
   const excerpt = document.createElement("span");
   excerpt.textContent = replyTo.excerpt;
@@ -1321,6 +1365,39 @@ function scrollToBottom(force = false) {
   if (force || isNearBottom()) chatScroll.scrollTop = chatScroll.scrollHeight;
 }
 
+function renderMessageLabel(nameEl, message, live = false) {
+  const agent = agentById(message.author);
+  const saved = message.agentMeta || {};
+  const parts = [agent?.name || saved.name || message.author,
+    `@${agentMention(agent) || saved.mention || message.author}`,
+    modelLabel(saved.model || agent?.model),
+    effortLabel(saved.effort || agent?.effort || "추론 강도 확인 불가")];
+  if (live) parts.push("응답 중");
+  nameEl.textContent = parts.join(" · ");
+}
+
+function refreshMessageLabels() {
+  for (const label of messageList.querySelectorAll(".meta .name")) {
+    const data = messageLabelData.get(label);
+    if (!data) continue;
+    renderMessageLabel(label, data.message, data.live);
+    const name = agentById(data.message.author)?.name || data.message.agentMeta?.name || data.message.author;
+    const item = label.closest(".message");
+    const avatar = item.querySelector(".avatar");
+    if (avatar) {
+      avatar.dataset.initial = name.slice(0, 1).toUpperCase();
+      const image = avatar.querySelector("img");
+      if (image) image.alt = `${name} 프로필`;
+      else avatar.textContent = avatar.dataset.initial;
+    }
+    item.querySelector(".message-reply")?.setAttribute("aria-label", `${name}의 메시지 인용`);
+  }
+  for (const label of messageList.querySelectorAll("[data-reply-author]")) {
+    label.textContent = replyAuthorLabel({ author: label.dataset.replyAuthor, authorType: label.dataset.replyAuthorType });
+  }
+  renderReplyPreview();
+}
+
 function renderMessage(message) {
   const item = document.createElement("li");
   item.className = "message";
@@ -1350,14 +1427,11 @@ function renderMessage(message) {
   meta.className = "meta";
   const nameEl = document.createElement("span");
   nameEl.className = "name";
-  const agentMeta = message.agentMeta || {};
-  const metaParts = isUser ? [name] : [name, `@${message.author}`];
-  if (!isUser) {
-    const shownModel = agentMeta.model || agent?.model;
-    const shownEffort = agentMeta.effort || agent?.effort;
-    metaParts.push(modelLabel(shownModel), effortLabel(shownEffort || "추론 강도 확인 불가"));
+  if (isUser) nameEl.textContent = name;
+  else {
+    messageLabelData.set(nameEl, { message });
+    renderMessageLabel(nameEl, message);
   }
-  nameEl.textContent = metaParts.join(" · ");
   const timeEl = document.createElement("span");
   timeEl.textContent = formatTime(message.ts);
   meta.append(nameEl, timeEl);
@@ -1596,11 +1670,9 @@ function handleRunEvent(payload) {
     meta.className = "meta";
     const nameEl = document.createElement("span");
     nameEl.className = "name";
-    const liveMeta = [agent?.name || agentId, `@${agentId}`];
-    liveMeta.push(modelLabel(agent?.model));
-    liveMeta.push(effortLabel(agent?.effort || "추론 강도 확인 중"));
-    liveMeta.push("응답 중");
-    nameEl.textContent = liveMeta.join(" · ");
+    const liveMessage = { author: agentId, agentMeta: { model: agent?.model, effort: agent?.effort } };
+    messageLabelData.set(nameEl, { message: liveMessage, live: true });
+    renderMessageLabel(nameEl, liveMessage, true);
     meta.append(nameEl);
     const bubble = document.createElement("div");
     bubble.className = "bubble is-live-bubble";
@@ -1702,7 +1774,7 @@ function renderTurnQueue() {
   turnNextLabel.hidden = waiting.length === 0;
   for (const turn of waiting) {
     const agent = agentById(turn.agentId);
-    const agentLabel = `@${agent?.id || turn.agentId}`;
+    const agentLabel = `@${agentMention(agent) || turn.agentId}`;
     const chip = document.createElement("span");
     chip.className = "turn-queue-chip";
     chip.setAttribute("role", "listitem");
@@ -1794,7 +1866,7 @@ composerInput.addEventListener("paste", async (event) => {
 function mentionTargets() {
   return [
     ...agents.map((agent) => ({
-      alias: agent.aliases[0],
+      alias: agentMention(agent),
       label: agent.name,
       color: agent.color,
       available: agent.available && agent.enabled,
@@ -2147,9 +2219,11 @@ window.chatApi.onSessionsChanged((payload) => {
 window.chatApi.onAgents(({ sessionId, agents: nextAgents }) => {
   if (sessionId !== activeSessionId) return;
   agents = nextAgents || [];
-  renderAgents();
+  refreshMessageLabels();
+  renderTyping();
   renderHeader();
   renderTurnQueue();
+  if (mentionState) updateMentionPopup();
 });
 function showNextApproval() {
   if (activeApproval || approvalQueue.length === 0) return;

@@ -15,6 +15,15 @@ function localTime(year, month, day, hours, minutes) {
   return new Date(year, month - 1, day, hours, minutes).getTime();
 }
 
+test("export uses current nicknames for stable message authors and quoted replies", () => {
+  const markdown = formatSessionMarkdown({ agents: { codex: { name: "검토 *담당*", mention: "리뷰" } } }, [
+    { authorType: "agent", author: "codex", text: "기존 내용" },
+    { authorType: "user", text: "좋아요", replyTo: { authorType: "agent", author: "codex", excerpt: "기존 내용" } },
+  ]);
+  assert.ok(markdown.includes("### 검토 \\*담당\\* (@리뷰)"));
+  assert.ok(markdown.includes("> 인용: 검토 \\*담당\\* (@리뷰)"));
+});
+
 test("빈 세션을 제목과 날짜가 있는 마크다운으로 변환한다", () => {
   const markdown = formatSessionMarkdown({
     title: "빈 세션",
