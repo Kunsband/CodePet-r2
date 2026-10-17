@@ -5,10 +5,12 @@
 ### English
 
 - Added per-chat display names and `@mentions` for all participants, including saved accounts. Original mentions continue to work.
+- Fixed agent handoffs running one at a time and cancelled work blocking new messages. Different participants can work concurrently; each participant keeps its own task order.
 
 ### 한국어
 
 - 기본·추가 계정 참가자의 표시 이름과 `@호출명`을 대화방별로 변경할 수 있습니다. 기존 호출명도 계속 사용할 수 있습니다.
+- 에이전트 간 작업 전달이 한 명씩 실행되거나 중지한 작업이 새 메시지를 막는 문제를 수정했습니다. 다른 참가자는 동시에 작업하며, 같은 참가자의 작업만 순서를 지킵니다.
 
 ## 1.0.10 — 2026-10-15
 

@@ -263,7 +263,7 @@ test("동시 실행 중인 수신자의 후속 호출은 기존 응답 뒤에 �
   assert.match(calls[3].prompt, /@agy 다음으로 답해줘/);
 });
 
-test("단독 응답의 여러 멘션은 문장에 나온 순서대로 이어서 실행한다", async () => {
+test("단독 응답의 여러 멘션은 문장 순서대로 함께 시작한다", async () => {
   const agents = makeAgents();
   agents[2].available = true;
   const calls = [];
@@ -417,7 +417,7 @@ test("서로 다른 사용자 메시지의 같은 에이전트 턴은 합치지 
   assert.deepEqual(calls, ["codex", "codex"]);
 });
 
-test("한 답변에서 여러 명을 호출해도 전역 큐 순서대로 한 명씩 답한다", async () => {
+test("한 답변에서 여러 명을 호출하면 앞 참가자의 완료를 기다리지 않는다", async () => {
   const agents = makeAgents();
   agents[2].available = true;
   const calls = [];
@@ -448,7 +448,7 @@ test("한 답변에서 여러 명을 호출해도 전역 큐 순서대로 한 �
   await settle(room);
 
   assert.deepEqual(calls, ["claude", "codex", "agy"]);
-  assert.equal(maxActive, 1);
+  assert.equal(maxActive, 2);
 });
 
 test("설치되지 않은 에이전트를 부르면 이유가 담긴 시스템 안내를 남긴다", async () => {
@@ -575,7 +575,7 @@ test("길게 이어지는 멘션도 사용자 개입 시 즉시 취소하고 다
   assert.ok(room.messages.every((message) => !message.text.includes("늦은 호출")));
 });
 
-test("동시 응답 중 후속 호출은 전체 수신자의 완료를 기다린다", async () => {
+test("작업 중인 같은 수신자의 후속 호출은 그 수신자의 완료를 기다린다", async () => {
   const calls = [];
   let finishCodex;
   const room = new ChatRoom({ agents: makeAgents(), random: () => 0.99, runAgent: ({ agent, prompt }) => {
@@ -800,7 +800,7 @@ test("토론 중 예약된 일반 응답은 토론이 끝날 때까지 발언하
   ]);
 });
 
-test("중지하면 진행 중인 턴뿐 아니라 전역 큐의 대기 턴도 폐기한다", async () => {
+test("중지하면 진행 중인 턴과 같은 참가자의 대기 턴도 폐기한다", async () => {
   const calls = [];
   let resolveActive;
   const room = new ChatRoom({
@@ -815,7 +815,7 @@ test("중지하면 진행 중인 턴뿐 아니라 전역 큐의 대기 턴도 �
     },
   });
   room.sendUserMessage("@claude 먼저 답해");
-  room.sendUserMessage("@codex 다음 작업");
+  room.sendUserMessage("@claude 다음 작업");
   await new Promise((resolve) => setImmediate(resolve));
   room.stopAll();
   await settle(room);
@@ -840,13 +840,13 @@ test("턴 상태는 현재 발언자와 취소 가능한 대기 턴을 공개한
   room.on("turn-state", (state) => states.push(state));
 
   room.sendUserMessage("@claude 먼저 답해");
-  room.sendUserMessage("@codex 다음 작업");
+  room.sendUserMessage("@claude 다음 작업");
   await new Promise((resolve) => setImmediate(resolve));
 
   const snapshot = room.turnState();
   assert.equal(snapshot.current, "claude");
   assert.equal(snapshot.queue.length, 1);
-  assert.equal(snapshot.queue[0].agentId, "codex");
+  assert.equal(snapshot.queue[0].agentId, "claude");
   assert.equal(room.cancelTurn(snapshot.queue[0].turnId), true);
   assert.equal(room.turnState().queue.length, 0);
 

@@ -33,7 +33,7 @@ Install and sign in to the CLIs you want to use: `codex`, `claude`, `agy`, or `g
 - **Sessions:** Create, rename, and switch conversations; search message contents; export a complete session as Markdown. Deleted sessions remain in trash for 30 days.
 - **History:** Open the latest messages first, up to 50 at a time. New messages appear at the bottom; scroll upward to load older messages while keeping your reading position.
 - **Shared traces:** Agents can look up another participant's commands, tool inputs, results, and errors in the same chat, including work in progress. Records are compressed and read in pages, without size-based truncation or automatic expiry. Available detail depends on the CLI.
-- **Mentions:** Send without a mention, or use `@all` / `@모두`, to deliver the same message to all participants at once. Replies appear as each finishes. Use `@codex`, `@claude`, `@agy`, or `@grok` to choose recipients. Agents can mention each other for follow-up work without a handoff count limit, including after a group message.
+- **Mentions:** Send without a mention, or use `@all` / `@모두`, to deliver the same message to all participants at once. Replies appear as each finishes. Use `@codex`, `@claude`, `@agy`, or `@grok` to choose recipients. Agents can hand off work to multiple participants concurrently; only work for the same participant waits its turn. There is no handoff count limit.
 - **Turn control:** View active participants and queued turns, cancel individual turns, interject, or stop responses.
 - **Multiple accounts:** Save Codex, Claude, or Grok accounts in Settings, then choose **Add account** (`계정 추가`) in the chat. Available accounts appear as `email(agent)(plan)`. Each participant has its own mention, model, reasoning setting, and task traces. One CLI installation per service is enough. Default participants use the currently active account; disable them if that duplicates a saved participant.
 - **Appearance:** The existing font-size setting also applies to chat messages and the input. Enable **Work mode** (`회사 모드`) in Settings to hide the pet, character avatars, and emotes; open chat from the tray.
@@ -114,6 +114,6 @@ npm test
 
 Open chat directly with `npx electron . --chat`, or check CLI setup with `node bin/code-pet.js doctor`.
 
-Build for the current OS with `npm run dist`; packages are written to `artifacts/`. Close CodePet before building. The release workflow builds Windows, Linux, and macOS packages and includes checksums.
+Build for the current OS with `npm run dist`; only distributable packages are added to `artifacts/`, and temporary build files are removed. Close CodePet before building. The release workflow builds Windows, Linux, and macOS packages and includes checksums.
 
 On Linux without FUSE mounting, run the AppImage with `--appimage-extract-and-run`. Release AppImages include `.zsync` files for AppImageUpdate. Wayland users need XWayland for automatic pet movement; explicit Electron platform settings take precedence.

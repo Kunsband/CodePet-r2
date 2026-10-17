@@ -52,6 +52,7 @@ function buildAgentPrompt({
   workMode = false,
   discussion = null,
   broadcast = null,
+  activeAgentIds = [],
   mentionsEnabled = !discussion,
   extraLines = [],
 }) {
@@ -66,6 +67,8 @@ function buildAgentPrompt({
   );
   const roster = ["사용자(User)", ...agents.map((entry) => `@${agentMention(entry)}(${entry.name})`)];
   lines.push(`참가자: ${roster.join(", ")}`);
+  const working = agents.filter((entry) => entry.id !== agent.id && activeAgentIds.includes(entry.id));
+  if (working.length) lines.push(`현재 함께 작업 중인 참가자: ${working.map((entry) => `@${agentMention(entry)}`).join(", ")}. 실행 시작 시점 기준이며 작업 중에 달라질 수 있습니다.`);
   const renamed = agents.filter((entry) => agentMention(entry) !== entry.id);
   if (renamed.length) lines.push(`작업 기록 조회용 참가자 ID: ${renamed.map((entry) => `@${agentMention(entry)}=${entry.id}`).join(", ")}`);
   lines.push("");
@@ -78,7 +81,8 @@ function buildAgentPrompt({
     lines.push(
       `- 다른 참가자를 호출하려면 @이름(${others.map((entry) => `@${agentMention(entry)}`).join(", ")})을 쓰세요. 그러면 그 참가자가 이어서 답합니다. 호출 없이 언급만 할 때는 @ 없이 이름만 쓰세요. 호출은 꼭 필요할 때만 하세요.`
     );
-    lines.push("- 작업 전달·결과 보고·검토가 필요하면 해당 참가자를 @로 호출해 이어가세요. 후속 호출은 진행 중인 응답이 끝난 뒤 실행됩니다.");
+    lines.push("- 작업 전달·결과 보고·검토가 필요하면 해당 참가자를 @로 호출하세요. 여러 참가자는 동시에 시작하며, 이미 작업 중인 참가자에게 전달한 요청만 그 참가자의 현재 작업 뒤에 실행됩니다.");
+    lines.push("- 다른 참가자도 같은 워크스페이스에서 작업할 수 있습니다. 대화의 담당 범위와 필요한 작업 기록을 확인해 중복 작업을 피하고, 다른 참가자의 변경을 덮어쓰거나 되돌리지 마세요. 같은 파일의 겹치는 수정은 담당자와 조율하세요.");
   } else if (others.length > 0) {
     lines.push("- 이번 턴에는 다른 참가자를 추가 호출할 수 없습니다. 다른 참가자를 언급하려면 @ 없이 이름만 쓰세요.");
   }

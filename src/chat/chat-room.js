@@ -84,6 +84,9 @@ class ChatRoom extends EventEmitter {
     this.pendingTurns = new Map();
     this.broadcastPositions = new Map();
     this.turnActive = false;
+    this.pumping = false;
+    this.batchSeq = 0;
+    this.batchSnapshots = new Map();
     this.currentTurn = null;
     this.currentTurns = [];
     // 사용자가 "잠깐"으로 개입하면 다음 사용자 발화 전까지 에이전트발
@@ -247,8 +250,7 @@ class ChatRoom extends EventEmitter {
     return true;
   }
 
-  // 방 전체 단일 턴 큐. 일반 응답과 멘션 호출은 대기 중인 같은 에이전트의
-  // 턴을 공유해, 한 릴레이에서 같은 발언권이 중복 예약되지 않게 합니다.
+  // 같은 참가자의 실행만 순서를 지킵니다. 다른 참가자는 기다리지 않습니다.
   scheduleResponse(agent, context = {}, options = {}) {
     const generation = this.generation;
     const dedupeKey = context.discussion || !context.turnRootId
@@ -346,6 +348,10 @@ class ChatRoom extends EventEmitter {
       if (item.dedupeKey && this.pendingTurns.get(item.dedupeKey) === item) {
         this.pendingTurns.delete(item.dedupeKey);
       }
+      if (![...this.currentTurns, ...this.turnQueue, ...this.deferredTurnQueue]
+        .some((turn) => turn.context.parallelBatch === item.context.parallelBatch)) {
+        this.batchSnapshots.delete(item.context.parallelBatch);
+      }
       item.resolve(undefined);
       this.emitTurnState();
       return true;
@@ -353,54 +359,65 @@ class ChatRoom extends EventEmitter {
     return false;
   }
 
-  async pumpTurnQueue() {
-    if (this.turnActive) return;
-    this.turnActive = true;
+  pumpTurnQueue() {
+    if (this.pumping) return;
+    this.pumping = true;
     try {
-      while (this.turnQueue.length > 0) {
-        const first = this.turnQueue.shift();
-        const batch = [first];
-        while (first.context.parallelBatch && this.turnQueue[0]?.context.parallelBatch === first.context.parallelBatch) {
-          batch.push(this.turnQueue.shift());
+      const busy = new Set(this.currentTurns.map((item) => item.agent.id));
+      const ready = [];
+      for (let index = 0; index < this.turnQueue.length;) {
+        const item = this.turnQueue[index];
+        if (busy.has(item.agent.id)) { index += 1; continue; }
+        this.turnQueue.splice(index, 1);
+        busy.add(item.agent.id);
+        const batchId = item.context.parallelBatch;
+        if (batchId && !this.batchSnapshots.has(batchId)) {
+          this.batchSnapshots.set(batchId, [...this.promptMessages()]);
         }
-        // Read once, before any participant can append its response.
-        const snapshot = first.context.parallelBatch ? this.promptMessages() : null;
-        this.currentTurns = batch;
-        this.currentTurn = first;
-        this.emitTurnState();
-        await Promise.all(batch.map(async (item) => {
-          if (item.dedupeKey && this.pendingTurns.get(item.dedupeKey) === item) {
-            this.pendingTurns.delete(item.dedupeKey);
-          }
-          let outcome;
-          try {
-            outcome = await this.respond(item.agent, {
-              ...item.context,
-              ...(snapshot ? { promptMessages: snapshot } : {}),
-            }, item.generation);
-          } catch {
-            outcome = undefined;
-          } finally {
-            this.currentTurns = this.currentTurns.filter((current) => current !== item);
-            this.currentTurn = this.currentTurns[0] || null;
-            this.emitTurnState();
-            item.resolve(outcome);
-          }
-        }));
-        const broadcastRootId = first.context.broadcast && first.context.turnRootId;
-        if (broadcastRootId) {
-          const hasRemainingBroadcastTurn = [...this.turnQueue, ...this.deferredTurnQueue]
-            .some((queued) => queued.context.broadcast
-              && queued.context.turnRootId === broadcastRootId);
-          if (!hasRemainingBroadcastTurn) this.broadcastPositions.delete(broadcastRootId);
+        ready.push(item);
+      }
+      this.currentTurns.push(...ready);
+      this.currentTurn = this.currentTurns[0] || null;
+      this.turnActive = this.currentTurns.length > 0;
+      if (ready.length) this.emitTurnState();
+      for (const item of ready) {
+        const snapshot = this.batchSnapshots.get(item.context.parallelBatch);
+        if (item.dedupeKey && this.pendingTurns.get(item.dedupeKey) === item) {
+          this.pendingTurns.delete(item.dedupeKey);
         }
-        this.emitTurnState();
+        void this.runQueuedTurn(item, snapshot);
       }
     } finally {
-      this.turnActive = false;
+      this.pumping = false;
       this.resolveIdleWaiters();
-      // finally 직전에 새 턴이 들어온 극히 짧은 경합도 놓치지 않습니다.
-      if (this.turnQueue.length > 0) this.pumpTurnQueue();
+    }
+  }
+
+  async runQueuedTurn(item, snapshot) {
+    let outcome;
+    try {
+      outcome = await this.respond(item.agent, {
+        ...item.context,
+        ...(snapshot ? { promptMessages: snapshot } : {}),
+      }, item.generation);
+    } catch {
+      outcome = undefined;
+    } finally {
+      if (item.generation === this.generation) {
+        this.currentTurns = this.currentTurns.filter((current) => current !== item);
+        this.currentTurn = this.currentTurns[0] || null;
+        this.turnActive = this.currentTurns.length > 0;
+        const remaining = [...this.currentTurns, ...this.turnQueue, ...this.deferredTurnQueue];
+        if (!remaining.some((turn) => turn.context.parallelBatch === item.context.parallelBatch)) {
+          this.batchSnapshots.delete(item.context.parallelBatch);
+        }
+        if (!remaining.some((turn) => turn.context.turnRootId === item.context.turnRootId)) {
+          this.broadcastPositions.delete(item.context.turnRootId);
+        }
+        this.emitTurnState();
+        this.pumpTurnQueue();
+      }
+      item.resolve(outcome);
     }
   }
 
@@ -469,6 +486,7 @@ class ChatRoom extends EventEmitter {
       workMode: Boolean(this.meta.workMode),
       discussion: context.discussion || null,
       broadcast,
+      activeAgentIds: this.currentTurns.map((item) => item.agent.id),
       mentionsEnabled: !context.discussion,
     });
 
@@ -506,8 +524,10 @@ class ChatRoom extends EventEmitter {
         result = { ok: false, error: detail || "에이전트 실행 중 내부 오류가 발생했습니다." };
       } finally {
         if (run) this.cancels.delete(run.cancel);
-        this.setTyping(agent.id, false);
-        this.trackRunEnd();
+        if (generation === this.generation) {
+          this.setTyping(agent.id, false);
+          this.trackRunEnd();
+        }
       }
       if (generation !== this.generation || result?.cancelled) return;
       emitEvent({ kind: "run-end", ok: Boolean(result?.ok) });
@@ -600,17 +620,19 @@ class ChatRoom extends EventEmitter {
   scheduleMentionReplies(agent, text, depth, attachments = [], turnRootId = null, routingAgents = this.agents) {
     if (this.mentionsMuted) return;
     const mentionedIds = parseMentions(text, routingAgents).filter((id) => id !== agent.id);
+    const parallelBatch = `handoff-${++this.batchSeq}`;
     let priorityIndex = 0;
     for (const agentId of mentionedIds) {
       const target = this.findAgent(agentId);
       if (!target || !target.available || target.enabled === false) continue;
       this.scheduleResponse(
         target,
-        { mentionDepth: depth + 1, attachments, turnRootId },
-        { priorityIndex }
+        { mentionDepth: depth + 1, attachments, turnRootId, parallelBatch },
+        { priorityIndex, deferPump: true }
       );
       priorityIndex += 1;
     }
+    this.pumpTurnQueue();
   }
 
   // 자율 토론: 차례대로 말하되 합의/패스/결론 신호에 따라 일찍 끝냅니다.
@@ -631,7 +653,6 @@ class ChatRoom extends EventEmitter {
     this.discussionRequested = true;
     await this.waitForIdle();
     if (requestedGeneration !== this.generation) {
-      this.discussionRequested = false;
       return { ok: false, cancelled: true };
     }
     this.discussionActive = true;
@@ -673,12 +694,14 @@ class ChatRoom extends EventEmitter {
         }
       }
     } finally {
-      this.discussionActive = false;
-      this.discussionRequested = false;
-      this.discussionInterrupted = false;
-      this.turnQueue.push(...this.deferredTurnQueue.splice(0));
-      this.emitTurnState();
-      this.pumpTurnQueue();
+      if (generation === this.generation) {
+        this.discussionActive = false;
+        this.discussionRequested = false;
+        this.discussionInterrupted = false;
+        this.turnQueue.push(...this.deferredTurnQueue.splice(0));
+        this.emitTurnState();
+        this.pumpTurnQueue();
+      }
     }
     return { ok: !failed, completed, truncated: false, concluded };
   }
@@ -698,11 +721,18 @@ class ChatRoom extends EventEmitter {
 
   stopAllSilently() {
     this.generation += 1;
-    for (const item of [...this.turnQueue, ...this.deferredTurnQueue]) item.resolve(undefined);
+    for (const item of [...this.currentTurns, ...this.turnQueue, ...this.deferredTurnQueue]) item.resolve(undefined);
+    this.currentTurns = [];
+    this.currentTurn = null;
+    this.turnActive = false;
+    this.discussionActive = false;
+    this.discussionRequested = false;
+    this.discussionInterrupted = false;
     this.turnQueue = [];
     this.deferredTurnQueue = [];
     this.pendingTurns.clear();
     this.broadcastPositions.clear();
+    this.batchSnapshots.clear();
     this.mentionsMuted = false;
     this.emitTurnState();
     for (const resolve of this.pendingApprovals.values()) resolve(false);

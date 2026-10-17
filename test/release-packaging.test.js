@@ -34,7 +34,7 @@ test("release packaging defines one native package for Windows, Linux, and macOS
 test("build script selects Linux on Linux and accepts an explicit Linux target", () => {
   assert.match(buildScript, /process\.argv\.includes\("--linux"\).*Platform\.LINUX/);
   assert.match(buildScript, /process\.platform === "linux".*Platform\.LINUX/);
-  assert.match(buildScript, /publish:\s*"never"/);
+  assert.match(buildScript, /buildReleaseArtifacts/);
 });
 
 test("release workflow builds three native runners and uploads all three packages", () => {
@@ -44,7 +44,9 @@ test("release workflow builds three native runners and uploads all three package
   assert.match(releaseWorkflow, /macos-latest[\s\S]*artifacts\/\*\.dmg/);
   assert.match(releaseWorkflow, /actions\/upload-artifact@v4/);
   assert.match(releaseWorkflow, /actions\/download-artifact@v4/);
-  assert.match(releaseWorkflow, /CodePet-\$\{\{ github\.sha \}\}-all-platforms/);
+  assert.doesNotMatch(releaseWorkflow, /all-platforms/);
+  assert.equal((releaseWorkflow.match(/uses: actions\/upload-artifact@/g) || []).length, 1);
+  assert.equal((releaseWorkflow.match(/uses: actions\/download-artifact@/g) || []).length, 1);
   assert.match(
     releaseWorkflow,
     /sha256sum CodePet-\*\.exe CodePet-\*\.AppImage CodePet-\*\.AppImage\.zsync CodePet-\*\.dmg/
@@ -70,6 +72,17 @@ test("release workflow builds three native runners and uploads all three package
   assert.match(releaseWorkflow, /chmod 4755 artifacts\/linux-unpacked\/chrome-sandbox/);
   assert.match(releaseWorkflow, /xvfb-run -a artifacts\/linux-unpacked\/code-pet/);
   assert.doesNotMatch(releaseWorkflow, /--no-sandbox/);
+});
+
+test("release workflow removes Linux validation files before repacking and uploads only native packages", () => {
+  const smoke = releaseWorkflow.indexOf("- name: Smoke-test the packaged Linux app");
+  const cleanup = releaseWorkflow.indexOf("- name: Remove the Linux smoke-test package");
+  const repack = releaseWorkflow.indexOf("- name: Embed AppImage update information");
+  assert.ok(smoke >= 0 && cleanup > smoke && repack > cleanup);
+  assert.match(releaseWorkflow, /CODEPET_LINUX_SMOKE_TEST:/);
+  assert.match(releaseWorkflow, /if: always\(\) && runner.os == 'Linux'\s+run: node scripts\/build-artifacts.js --clean-linux/);
+  assert.match(releaseWorkflow, /collect:\s+needs: \[metadata, build\]/);
+  assert.match(releaseWorkflow, /Publish the complete three-platform GitHub Release\s+if: needs.metadata.outputs.publish == 'true'/);
 });
 
 test("CI는 모든 push와 pull request에서 세 OS 테스트를 실행한다", () => {
