@@ -110,20 +110,28 @@ function compactArgvPrompt(prompt, limit = MAX_ARGV_PROMPT_CHARS) {
   return text.slice(0, headLength) + marker + text.slice(-tailLength);
 }
 
-function killTree(child, platform = process.platform) {
+function killTree(child, platform = process.platform, spawnKiller = spawn) {
   if (!child || child.killed || child.exitCode !== null) return;
   if (platform === "win32") {
     // shell(cmd.exe) 경유 실행 시 자식까지 함께 종료해야 합니다.
+    let fallbackTimer;
+    const fallback = () => {
+      clearTimeout(fallbackTimer);
+      try { child.kill(); } catch {}
+    };
     try {
-      const killer = spawn("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
+      const killer = spawnKiller("taskkill", ["/pid", String(child.pid), "/T", "/F"], {
         windowsHide: true,
       });
-      killer.on("error", () => {});
-    } catch {}
-    // taskkill 자체가 보안 정책으로 막히는 경우에도 직계 프로세스는 닫습니다.
-    try {
-      child.kill();
-    } catch {}
+      // Keep the parent alive until taskkill can enumerate its descendants.
+      fallbackTimer = setTimeout(fallback, 3000);
+      fallbackTimer.unref?.();
+      killer.once("error", fallback);
+      killer.once("close", (code) => {
+        clearTimeout(fallbackTimer);
+        if (code !== 0) fallback();
+      });
+    } catch { fallback(); }
   } else {
     child.kill("SIGTERM");
   }

@@ -2196,6 +2196,12 @@ window.chatApi.onTurnState(({ sessionId, ...nextTurnState }) => {
   if (sessionId !== activeSessionId) return;
   turnState = normalizeTurnState(nextTurnState);
   renderTurnQueue();
+  if (!turnState.current) {
+    if (liveFrame !== null) cancelAnimationFrame(liveFrame);
+    liveFrame = null;
+    for (const live of liveRuns.values()) live.item.remove();
+    liveRuns.clear();
+  }
 });
 window.chatApi.onReset(({ sessionId }) => {
   if (sessionId !== activeSessionId) return;
