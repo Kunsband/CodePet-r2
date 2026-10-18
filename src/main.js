@@ -891,12 +891,14 @@ function ensureRoamingMotionState() {
 }
 
 function syncMovementAnimation() {
-  if (runtime.manualPaused) {
-    ensurePetState("idle");
-    return;
-  }
   if (hasBlockingPauseReasons()) {
     ensurePetState(getActivePauseState());
+    return;
+  }
+
+  // 이동 일시 정지는 위치만 고정합니다. 작업 상태와 클릭 반응은 계속 표시합니다.
+  if (runtime.manualPaused) {
+    ensurePetState(getActivityPetState() || "idle");
     return;
   }
 
@@ -943,7 +945,7 @@ function resumeAutoMovement(reason, delayMs = 0) {
   runtime.pauseStates.delete(reason);
 
   if (runtime.manualPaused) {
-    sendPetState("idle");
+    syncMovementAnimation();
     return;
   }
 
@@ -982,7 +984,10 @@ function beginWalkingPhase() {
 // 잠시 멈추는 phase를 시작합니다.
 // 이동과 대기를 번갈아 쓰면 펫이 더 자연스럽게 보이고, idle 애니메이션도 확인하기 쉽습니다.
 function beginIdlePhase() {
-  if (runtime.manualPaused || hasBlockingPauseReasons()) return;
+  if (runtime.manualPaused || hasBlockingPauseReasons()) {
+    syncMovementAnimation();
+    return;
+  }
 
   runtime.movementPhase = "idle";
   runtime.idleState = chooseRandomIdleState();
@@ -1156,7 +1161,7 @@ function toggleManualPause() {
 
   if (runtime.manualPaused) {
     clearTimeout(phaseTimer);
-    sendPetState("idle");
+    syncMovementAnimation();
     refreshTrayMenu();
     return;
   }

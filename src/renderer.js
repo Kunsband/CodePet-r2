@@ -383,9 +383,8 @@ function showErrorMessage(message) {
 }
 
 // 스프라이트 이미지를 petElement 배경으로 적용합니다.
-// keepState가 true면(실행 중 펫 교체) 현재 애니메이션 상태를 유지하고,
-// false면(최초 로드) idle부터 시작합니다.
-function applySpriteSheet(config, keepState = false) {
+// 최초 이미지 로딩 중에도 작업 이벤트가 올 수 있으므로 항상 최신 상태를 유지합니다.
+function applySpriteSheet(config) {
   if (!config.assetExists || !config.spriteUrl) {
     showErrorMessage(`Missing asset: ${config.spritePath}`);
     return;
@@ -407,7 +406,7 @@ function applySpriteSheet(config, keepState = false) {
     petElement.dataset.spriteRows = String(spriteRows);
     petElement.hidden = false;
     errorElement.hidden = true;
-    setAnimationState(keepState ? currentStateRequest() : "idle");
+    setAnimationState(currentStateRequest());
   };
 
   image.onerror = () => {
@@ -615,7 +614,7 @@ async function startRenderer() {
 
     petElement.hidden = false;
     errorElement.hidden = true;
-    applySpriteSheet(normalizedConfig, true);
+    applySpriteSheet(normalizedConfig);
   });
 
   appConfig = await window.petApi.getAppConfig();
