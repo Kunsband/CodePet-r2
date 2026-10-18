@@ -218,6 +218,10 @@ function tierLabel(assist) {
   return tier?.displayName || tier?.display_name || tier?.name || tier?.id || null;
 }
 
+// agy CLI처럼 Go 형식의 OS/아키텍처 이름을 보냅니다.
+const AGY_USER_AGENT = `antigravity/cli/1.0.11 ${process.platform === "win32" ? "windows" : process.platform}/${
+  process.arch === "x64" ? "amd64" : process.arch}`;
+
 async function fetchAntigravityUsage({ credential, force = false, credentialStore } = {}) {
   const token = credential?.token?.access_token;
   if (!token) throw new Error("AGY 로그인 정보가 없습니다.");
@@ -227,7 +231,7 @@ async function fetchAntigravityUsage({ credential, force = false, credentialStor
     const headers = {
       authorization: `Bearer ${accessToken}`,
       "content-type": "application/json",
-      "user-agent": "antigravity/cli/1.0.11 windows/amd64",
+      "user-agent": AGY_USER_AGENT,
     };
     const [assist, identity] = await Promise.all([
       json("https://daily-cloudcode-pa.googleapis.com/v1internal:loadCodeAssist", {

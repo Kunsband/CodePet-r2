@@ -1,10 +1,11 @@
-const { readCredential, writeCredential } = require("./credential-store");
+const { createAntigravityCredentialStore } = require("./antigravity-credential");
 const { resolveAntigravityClient } = require("./antigravity-oauth-client");
 
 const refreshes = new Map();
+const liveStore = createAntigravityCredentialStore();
 const defaultStore = {
-  read: async () => JSON.parse(await readCredential("gemini:antigravity")),
-  write: (value) => writeCredential("gemini:antigravity", value),
+  read: async () => JSON.parse(await liveStore.read()),
+  write: (value, options) => liveStore.write(value, options),
 };
 
 function clientId(credential) {
@@ -70,7 +71,7 @@ async function refreshAntigravityCredential(credential, { store = defaultStore, 
         throw new Error("AGY 계정이 변경됐습니다. 다시 조회해 주세요.");
       }
       if (latest.token.access_token !== current.token.access_token && !expired(latest)) return latest;
-      await store.write(next);
+      await store.write(next, { expectedRefreshToken: refreshToken });
       return next;
     })();
     refreshes.set(refreshToken, pending);
