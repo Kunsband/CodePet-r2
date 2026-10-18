@@ -1,4 +1,4 @@
-const NON_BLOCKING_ACTIVITY_REASONS = new Set(["codex"]);
+const NON_BLOCKING_ACTIVITY_REASONS = new Set(["codex", "chat"]);
 
 function isActivityOnlyReason(reason) {
   return NON_BLOCKING_ACTIVITY_REASONS.has(reason);

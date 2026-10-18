@@ -106,6 +106,7 @@ contextBridge.exposeInMainWorld("chatApi", {
   onRunEvent: (handler) => subscribe("chat:run-event", handler),
   onSessionsChanged: (handler) => subscribe("chat:sessions-changed", handler),
   onAgents: (handler) => subscribe("chat:agents", handler),
+  onProvidersChanged: (handler) => subscribe("chat:providers-changed", handler),
   onApprovalRequest: (handler) => subscribe("chat:approval-request", handler),
   onAppearance: (handler) => subscribe("appearance:update", handler),
   onMaximizedState: (handler) => subscribe("chat:maximized-state", handler),

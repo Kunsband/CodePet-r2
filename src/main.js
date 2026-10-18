@@ -76,7 +76,6 @@ const {
   DEFAULT_SPRITE_ROWS,
   V2_SPRITE_ROWS,
   detectSpriteRows,
-  directionIndexFromVector,
 } = require("./sprite-layout");
 
 app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
@@ -254,6 +253,7 @@ function readSettings() {
 function writeSettings(patch) {
   const current = readSettings();
   delete current.themeSource;
+  delete current.followMouse;
   const next = { ...current, ...patch };
   try {
     fs.writeFileSync(getSettingsPath(), JSON.stringify(next, null, 2));
@@ -484,6 +484,10 @@ const chatFeature = createChatFeature({
   getAccountSwitcher: (provider) => ({ claude: claudeAccountSwitcher, agy: antigravityAccountSwitcher, grok: grokAccountSwitcher })[provider],
   openSettings: () => openSettingsWindow(),
   prepareAgent: ({ agent }) => prepareChatAgent(agent),
+  onActivity: (state) => {
+    if (state) pauseAutoMovement("chat", state);
+    else resumeAutoMovement("chat");
+  },
   grokDockerRuntime,
 });
 let movementTimer = null;
@@ -749,13 +753,10 @@ const runtime = {
   spriteRows: DEFAULT_SPRITE_ROWS,
   idleState: "waiting",
   currentState: "idle",
-  lookDirectionIndex: null,
-  lookFallbackState: "idle",
   movementPhase: "idle",
   manualPaused: false,
   pauseReasons: new Set(),
   pauseStates: new Map(),
-  followMouse: false,
 };
 
 function restoreMovementPreferences() {
@@ -805,7 +806,7 @@ function getActivePauseState() {
 }
 
 function getActivityPetState() {
-  return runtime.pauseStates.get("codex") || null;
+  return runtime.pauseStates.get("chat") || runtime.pauseStates.get("codex") || null;
 }
 
 function hasBlockingPauseReasons() {
@@ -870,69 +871,19 @@ function moveWindowTo(nextX, nextY, { workArea = null } = {}) {
 // 상태 이름을 잘못 보내도 renderer가 idle로 fallback하지만, main에서도 최대한 명확히 관리합니다.
 function sendPetState(stateName) {
   runtime.currentState = stateName;
-  runtime.lookDirectionIndex = null;
-  runtime.lookFallbackState = "idle";
 
   if (petWindow && !petWindow.isDestroyed()) {
     petWindow.webContents.send(IPC_CHANNELS.SET_STATE, stateName);
   }
 }
 
-function sendLookDirectionState(directionIndex, fallbackState) {
-  const normalizedDirection = ((Math.round(Number(directionIndex) || 0) % 16) + 16) % 16;
-  const normalizedFallback = fallbackState === "runningLeft"
-    ? "runningLeft"
-    : fallbackState === "runningRight"
-      ? "runningRight"
-      : "idle";
-
-  runtime.currentState = "lookDirection";
-  runtime.lookDirectionIndex = normalizedDirection;
-  runtime.lookFallbackState = normalizedFallback;
-
-  if (petWindow && !petWindow.isDestroyed()) {
-    petWindow.webContents.send(IPC_CHANNELS.SET_STATE, {
-      state: "lookDirection",
-      directionIndex: normalizedDirection,
-      fallbackState: normalizedFallback,
-    });
-  }
-}
-
 function ensurePetState(stateName) {
-  if (runtime.currentState === stateName && runtime.lookDirectionIndex === null) return;
+  if (runtime.currentState === stateName) return;
   sendPetState(stateName);
 }
 
-function ensureLookDirectionState(directionIndex, fallbackState) {
-  if (
-    runtime.currentState === "lookDirection" &&
-    runtime.lookDirectionIndex === directionIndex &&
-    runtime.lookFallbackState === fallbackState
-  ) {
-    return;
-  }
-  sendLookDirectionState(directionIndex, fallbackState);
-}
-
 function resendCurrentPetState() {
-  if (runtime.currentState === "lookDirection" && runtime.lookDirectionIndex !== null) {
-    sendLookDirectionState(runtime.lookDirectionIndex, runtime.lookFallbackState);
-    return;
-  }
   sendPetState(runtime.currentState || "idle");
-}
-
-function ensureMouseLookState() {
-  const mouse = screen.getCursorScreenPoint();
-  const deltaX = mouse.x - (runtime.x + runtime.width / 2);
-  const deltaY = mouse.y - (runtime.y + runtime.height / 2);
-  const directionIndex = directionIndexFromVector(deltaX, deltaY);
-  if (directionIndex === null) {
-    ensurePetState(runtime.idleState || "waiting");
-    return;
-  }
-  ensureLookDirectionState(directionIndex, "idle");
 }
 
 function ensureRoamingMotionState() {
@@ -949,13 +900,8 @@ function syncMovementAnimation() {
     return;
   }
 
-  if (!runtime.followMouse && runtime.movementPhase === "walking") {
+  if (runtime.movementPhase === "walking") {
     ensureRoamingMotionState();
-    return;
-  }
-
-  if (runtime.followMouse) {
-    ensureMouseLookState();
     return;
   }
 
@@ -1011,12 +957,6 @@ function resumeAutoMovement(reason, delayMs = 0) {
     return;
   }
 
-  if (runtime.followMouse) {
-    runtime.movementPhase = "looking";
-    syncMovementAnimation();
-    return;
-  }
-
   runtime.movementPhase = "idle";
   runtime.idleState = chooseRandomIdleState();
   ensurePetState(getActivityPetState() || runtime.idleState);
@@ -1026,7 +966,7 @@ function resumeAutoMovement(reason, delayMs = 0) {
 // 걸어가는 phase를 시작합니다.
 // 방향에 따라 runningRight/runningLeft 상태를 renderer에 보냅니다.
 function beginWalkingPhase() {
-  if (runtime.manualPaused || hasBlockingPauseReasons() || runtime.followMouse) return;
+  if (runtime.manualPaused || hasBlockingPauseReasons()) return;
 
   const vector = createRoamingVector();
   runtime.velocityX = vector.x;
@@ -1042,7 +982,7 @@ function beginWalkingPhase() {
 // 잠시 멈추는 phase를 시작합니다.
 // 이동과 대기를 번갈아 쓰면 펫이 더 자연스럽게 보이고, idle 애니메이션도 확인하기 쉽습니다.
 function beginIdlePhase() {
-  if (runtime.manualPaused || hasBlockingPauseReasons() || runtime.followMouse) return;
+  if (runtime.manualPaused || hasBlockingPauseReasons()) return;
 
   runtime.movementPhase = "idle";
   runtime.idleState = chooseRandomIdleState();
@@ -1055,11 +995,6 @@ function beginIdlePhase() {
 function updateMovementTick() {
   if (!petWindow || petWindow.isDestroyed()) return;
   if (runtime.manualPaused || hasBlockingPauseReasons()) return;
-
-  if (runtime.followMouse) {
-    syncMovementAnimation();
-    return;
-  }
 
   if (runtime.movementPhase !== "walking") return;
 
@@ -1141,14 +1076,15 @@ function stopMovementLoop() {
 // resetPosition이 true면 앱 시작처럼 화면 아래쪽에 새로 배치하고,
 // false면 트레이에서 다시 보이게 할 때처럼 사용자가 마지막으로 둔 위치를 유지합니다.
 function startMovementLoop({ resetPosition = true } = {}) {
-  const activityState = getActivityPetState();
+  const activityStates = ["codex", "chat"].map((reason) => [reason, runtime.pauseStates.get(reason)]);
   runtime.spriteRows = detectPetSpriteRows() || DEFAULT_SPRITE_ROWS;
   stopMovementLoop();
   runtime.pauseReasons.clear();
   runtime.pauseStates.clear();
-  if (activityState) {
-    runtime.pauseReasons.add("codex");
-    runtime.pauseStates.set("codex", activityState);
+  for (const [reason, state] of activityStates) {
+    if (!state) continue;
+    runtime.pauseReasons.add(reason);
+    runtime.pauseStates.set(reason, state);
   }
   runtime.movementPhase = "idle";
 
@@ -1158,12 +1094,7 @@ function startMovementLoop({ resetPosition = true } = {}) {
     moveWindowTo(runtime.x, runtime.y);
   }
 
-  if (runtime.followMouse) {
-    runtime.movementPhase = "looking";
-    syncMovementAnimation();
-  } else {
-    beginIdlePhase();
-  }
+  beginIdlePhase();
   movementTimer = setInterval(updateMovementTick, MOVEMENT_CONFIG.tickMs);
 }
 
@@ -1230,12 +1161,7 @@ function toggleManualPause() {
     return;
   }
 
-  if (runtime.followMouse) {
-    runtime.movementPhase = "looking";
-    syncMovementAnimation();
-  } else {
-    beginIdlePhase();
-  }
+  beginIdlePhase();
   refreshTrayMenu();
 }
 
@@ -2151,12 +2077,6 @@ function buildAppMenu() {
       click: toggleManualPause,
     },
     {
-      label: "마우스 따라가기",
-      type: "checkbox",
-      checked: runtime.followMouse,
-      click: toggleFollowMouse,
-    },
-    {
       label: "모션 실행",
       submenu: buildManualMotionSubmenu(),
     },
@@ -2246,22 +2166,6 @@ function quitApp() {
   }
 
   app.quit();
-}
-
-// 마우스 따라가기 토글은 펫 메뉴와 트레이 메뉴가 같은 상태를 공유합니다.
-function toggleFollowMouse() {
-  runtime.followMouse = !runtime.followMouse;
-  persistMovementPreferences();
-
-  if (runtime.followMouse) {
-    clearTimeout(phaseTimer);
-    runtime.movementPhase = "looking";
-    syncMovementAnimation();
-  } else if (petWindow && !petWindow.isDestroyed() && petWindow.isVisible()) {
-    beginIdlePhase();
-  }
-
-  refreshTrayMenu();
 }
 
 function buildManualMotionSubmenu() {
@@ -3481,7 +3385,6 @@ function registerIpcHandlers() {
   }));
   ipcMain.handle("settings:save", async (_event, input) => {
     const next = input && typeof input === "object" ? input : {};
-    const fonts = await getInstalledFonts();
     const patch = {};
 
     const previousSettings = readSettings();
@@ -3493,7 +3396,10 @@ function registerIpcHandlers() {
     }
 
     if (Object.hasOwn(next, "fontFamily")) {
-      patch.fontFamily = normalizeFontFamily(next.fontFamily, fonts);
+      const requested = typeof next.fontFamily === "string" ? next.fontFamily.trim() || null : null;
+      if (requested !== (previousSettings.fontFamily || null)) {
+        patch.fontFamily = requested ? normalizeFontFamily(requested, await getInstalledFonts()) : null;
+      }
     }
     if (Object.hasOwn(next, "fontSize")) {
       patch.fontSize = normalizeFontSize(next.fontSize);
@@ -3512,9 +3418,6 @@ function registerIpcHandlers() {
     }
     if (Object.values(ACTIVITY_BUBBLE_MODES).includes(next.activityBubbleMode)) {
       setActivityBubbleMode(next.activityBubbleMode);
-    }
-    if (typeof next.followMouse === "boolean" && next.followMouse !== runtime.followMouse) {
-      toggleFollowMouse();
     }
     if (typeof next.autoStart === "boolean" && next.autoStart !== isAutoLaunchEnabled()) {
       toggleAutoLaunch();
@@ -3886,7 +3789,6 @@ async function getSettingsData({ forceUsage = false } = {}) {
     pets: pets.map((pet) => ({ key: pet.key, label: pet.label })),
     petKey: resolveSelectedPet()?.key || "",
     activityBubbleMode: settings.activityBubbleMode || "full",
-    followMouse: runtime.followMouse,
     autoStart: isAutoLaunchEnabled(),
     providers: [
       { id: "codex", label: "Codex", accounts: codexAccounts },

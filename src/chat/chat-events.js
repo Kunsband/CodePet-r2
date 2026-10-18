@@ -190,16 +190,27 @@ function parseGrokLine(line, parsed = undefined) {
   return null;
 }
 
-function createLineParser(providerId, onTrace = null) {
+function nativeSessionId(providerId, event) {
+  const id = providerId === "codex" && event?.type === "thread.started" ? event.thread_id
+    : ["claude", "grok"].includes(providerId) && event?.type === "system" && event.subtype === "init" ? event.session_id
+    : providerId === "agy" && event?.event === "init" ? event.conversation_id : null;
+  return typeof id === "string" && /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(id) ? id : null;
+}
+
+function createLineParser(providerId, onTrace = null, onNativeSession = null) {
   const parser = { claude: parseClaudeLine, codex: parseCodexLine, agy: parseAgyLine, grok: parseGrokLine }[providerId];
   if (!parser) return null;
-  if (typeof onTrace !== "function") return parser;
+  if (typeof onTrace !== "function" && typeof onNativeSession !== "function") return parser;
   const { traceEvents } = require("./chat-trace-events");
   const pending = new Set();
   const tracedParser = (line) => {
     const parsed = parseJsonLine(line);
+    const sessionId = nativeSessionId(providerId, parsed);
     try {
-      for (const event of traceEvents(providerId, parsed)) {
+      if (sessionId && typeof onNativeSession === "function") onNativeSession(sessionId);
+    } catch { /* Native session linking must not interrupt output or trace recording. */ }
+    try {
+      for (const event of typeof onTrace === "function" ? traceEvents(providerId, parsed) : []) {
         const write = onTrace(event);
         if (write?.then) pending.add(write);
       }
@@ -222,4 +233,5 @@ module.exports = {
   parseAgyLine,
   parseGrokLine,
   GROK_CHANGESET_PREFIX,
+  nativeSessionId,
 };

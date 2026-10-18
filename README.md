@@ -100,6 +100,8 @@ For a custom pet, place `spritesheet.webp` in a `pet/` folder beside the executa
 
 Conversations, attachment copies, and local task traces are stored in `~/.code-pet`. Set `CODE_PET_HOME` to change the location. Uninstalling the app leaves this folder in place. Deleting a chat also removes its traces.
 
+Each participant resumes its native CLI session within the same chat, including after an app restart. Changing the account, working directory, permissions, model, or reasoning setting starts a new session. Saved-account participants use their own profile; deleting a CodePet chat does not delete native CLI history.
+
 CodePet does not copy CLI credentials into chat storage and redacts recognized credential patterns from task traces. Saved account profiles are stored separately under `~/.codepet/*-switch`.
 
 Conversation context, supported attachments, and requested trace excerpts are passed to the selected agent CLI for processing by its provider. AGY prompts can temporarily appear in the operating system's process list while a response is running.

@@ -55,6 +55,7 @@ let diagnostics = [];
 let sessions = [];
 let activeSessionId = null;
 let sessionMeta = null;
+let providersLoading = false;
 let agents = [];
 let pendingAttachments = [];
 const approvalQueue = [];
@@ -70,6 +71,7 @@ let historyLoading = false;
 let historyEpoch = 0;
 let historyScrollTop = 0;
 let liveFrame = null;
+let liveTimer = null;
 let mentionState = null;
 let noticeTimer = null;
 let turnState = { current: null, queue: [], deferred: [] };
@@ -525,8 +527,9 @@ function renderSessions() {
     item.className = "session-item";
     if (entry.id === activeSessionId) item.classList.add("is-active");
 
-    const main = document.createElement("button");
-    main.type = "button";
+    const main = document.createElement("div");
+    main.setAttribute("role", "button");
+    main.tabIndex = 0;
     main.className = "session-select";
 
     const titleLine = document.createElement("span");
@@ -560,7 +563,14 @@ function renderSessions() {
       metaLine.append(workspace);
     }
     main.append(titleLine, metaLine);
-    main.addEventListener("click", () => selectSession(entry.id));
+    main.addEventListener("click", (event) => {
+      if (!event.target.closest(".session-rename-input")) selectSession(entry.id);
+    });
+    main.addEventListener("keydown", (event) => {
+      if (event.target !== main || !["Enter", " "].includes(event.key)) return;
+      event.preventDefault();
+      selectSession(entry.id);
+    });
     main.addEventListener("dblclick", () => startInlineRename(titleText, entry.id));
 
     const actions = document.createElement("span");
@@ -672,9 +682,11 @@ function startInlineRename(titleTextEl, sessionId) {
     }
   };
   input.addEventListener("keydown", (event) => {
-    if (event.key === "Enter" && !event.isComposing) commit(true);
-    if (event.key === "Escape") commit(false);
+    event.stopPropagation();
+    if (event.key === "Enter" && !event.isComposing) { event.preventDefault(); commit(true); }
+    if (event.key === "Escape") { event.preventDefault(); commit(false); }
   });
+  input.addEventListener("dblclick", (event) => event.stopPropagation());
   input.addEventListener("blur", () => commit(true));
 }
 
@@ -693,6 +705,7 @@ function activeSessionEntry() {
 }
 
 function renderHeader() {
+  sendButton.disabled = providersLoading && !agents.some((agent) => agent.available && agent.enabled);
   const entry = activeSessionEntry();
   sessionTitleEl.textContent = sessionMeta?.title || entry?.title || "세션";
 
@@ -1575,8 +1588,7 @@ function renderAllMessages(messages, history = {}) {
   historyHasMore = Boolean(history.hasMore);
   historyLoading = false;
   updateHistoryButton();
-  if (liveFrame !== null) cancelAnimationFrame(liveFrame);
-  liveFrame = null;
+  cancelLiveUpdate();
   messageList.textContent = "";
   liveRuns.clear();
   displayedMessageIds.clear();
@@ -1638,19 +1650,35 @@ chatScroll.addEventListener("scroll", () => {
   if (upward && top < 160) void loadOlderMessages();
 }, { passive: true });
 
+function cancelLiveUpdate() {
+  if (liveFrame !== null) cancelAnimationFrame(liveFrame);
+  if (liveTimer !== null) clearTimeout(liveTimer);
+  liveFrame = null;
+  liveTimer = null;
+}
+
 function scheduleLiveUpdate() {
-  if (liveFrame !== null) return;
-  liveFrame = requestAnimationFrame(() => {
-    liveFrame = null;
-    const stick = isNearBottom();
-    for (const live of liveRuns.values()) {
-      if (!live.dirty) continue;
-      live.textEl.textContent = live.text;
-      live.statusEl.textContent = "";
-      live.dirty = false;
-    }
-    if (stick) scrollToBottom(true);
-  });
+  if (liveFrame !== null || liveTimer !== null) return;
+  liveTimer = setTimeout(() => {
+    liveTimer = null;
+    liveFrame = requestAnimationFrame(() => {
+      liveFrame = null;
+      const stick = isNearBottom();
+      for (const live of liveRuns.values()) {
+        if (!live.dirty) continue;
+        if (live.resetText) {
+          live.textNode.data = live.text;
+          live.resetText = false;
+        } else {
+          live.textNode.appendData(live.text.slice(live.renderedLength));
+        }
+        live.renderedLength = live.text.length;
+        live.statusEl.textContent = "";
+        live.dirty = false;
+      }
+      if (stick) scrollToBottom(true);
+    });
+  }, 100);
 }
 
 // --- 실시간 실행 이벤트 (스트리밍/상태) ---
@@ -1681,11 +1709,13 @@ function handleRunEvent(payload) {
     statusEl.textContent = "…";
     const textEl = document.createElement("div");
     textEl.className = "live-text";
+    const textNode = document.createTextNode("");
+    textEl.append(textNode);
     bubble.append(statusEl, textEl);
     body.append(meta, bubble);
     item.append(avatar, body);
     messageList.append(item);
-    liveRuns.set(runId, { item, statusEl, textEl, text: "" });
+    liveRuns.set(runId, { item, statusEl, textEl, textNode, text: "", renderedLength: 0 });
     if (stick) scrollToBottom(true);
     return;
   }
@@ -1697,7 +1727,10 @@ function handleRunEvent(payload) {
   } else if (kind === "delta") {
     live.text += payload.text || "";
     // 스트리밍 미리보기만 제한하며 최종 메시지는 별도로 온전하게 표시합니다.
-    if (live.text.length > 64 * 1024) live.text = `…\n${live.text.slice(-60 * 1024)}`;
+    if (live.text.length > 64 * 1024) {
+      live.text = `…\n${live.text.slice(-60 * 1024)}`;
+      live.resetText = true;
+    }
     live.dirty = true;
     scheduleLiveUpdate();
   } else if (kind === "run-end") {
@@ -2138,6 +2171,7 @@ window.chatApi.onMaximizedState((isMaximized) => {
 
 // --- 상태 적용 ---
 function applyFullState(full) {
+  if (Object.hasOwn(full, "providersLoading")) providersLoading = full.providersLoading;
   if (full.appearance) applyAppearance(full.appearance);
   const previousSessionId = activeSessionId;
   if (full.providers) providers = full.providers;
@@ -2197,8 +2231,7 @@ window.chatApi.onTurnState(({ sessionId, ...nextTurnState }) => {
   turnState = normalizeTurnState(nextTurnState);
   renderTurnQueue();
   if (!turnState.current) {
-    if (liveFrame !== null) cancelAnimationFrame(liveFrame);
-    liveFrame = null;
+    cancelLiveUpdate();
     for (const live of liveRuns.values()) live.item.remove();
     liveRuns.clear();
   }
@@ -2231,6 +2264,16 @@ window.chatApi.onAgents(({ sessionId, agents: nextAgents }) => {
   renderTurnQueue();
   if (mentionState) updateMentionPopup();
 });
+window.chatApi.onProvidersChanged(({ sessionId, providers: nextProviders, diagnostics: nextDiagnostics }) => {
+  if (sessionId !== activeSessionId) return;
+  providersLoading = false;
+  providers = nextProviders || providers;
+  diagnostics = nextDiagnostics || diagnostics;
+  renderHeader();
+  renderAgents();
+  if (!doctorBackdrop.hidden) renderDoctor();
+  else if (localStorage.getItem(DOCTOR_SEEN_KEY) !== "true") openDoctor({ firstRun: true });
+});
 function showNextApproval() {
   if (activeApproval || approvalQueue.length === 0) return;
   activeApproval = approvalQueue.shift();
@@ -2257,10 +2300,10 @@ window.chatApi.onAppearance(applyAppearance);
 
 // --- 초기화 ---
 (async () => {
-  const full = await call(window.chatApi.state());
+  const full = await call(window.chatApi.state({ backgroundProviders: true }));
   if (full) {
     applyFullState(full);
-    if (localStorage.getItem(DOCTOR_SEEN_KEY) !== "true") openDoctor({ firstRun: true });
+    if (!providersLoading && localStorage.getItem(DOCTOR_SEEN_KEY) !== "true") openDoctor({ firstRun: true });
   }
   composerInput.focus();
 })();

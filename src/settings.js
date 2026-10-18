@@ -8,6 +8,13 @@ const fontSizeValue = document.querySelector("#font-size-value");
 
 let state = null;
 let installedFonts = [];
+let fontsReady = false;
+let fontsFailed = false;
+let lastFontRender = null;
+let fontSearchTimer = null;
+let fontPreviewFrame = null;
+let fontListVisible = false;
+const previewedFontOptions = new Set();
 let selectedFont = "";
 let selectedFontSize = 12;
 let toastTimer = null;
@@ -31,10 +38,36 @@ function quoteFontFamily(fontFamily) {
   return `"${escaped}"`;
 }
 
-function createFontOption(label, value, fontFamily = "") {
-  const option = new Option(label, value);
-  option.style.fontFamily = fontFamily ? quoteFontFamily(fontFamily) : "var(--font-body)";
-  return option;
+function createFontOption(label, value) {
+  return new Option(label, value);
+}
+
+function scheduleFontPreviews() {
+  if (!fontListVisible || fontPreviewFrame !== null) return;
+  fontPreviewFrame = requestAnimationFrame(() => {
+    fontPreviewFrame = null;
+    if (!fontListVisible || !fontSelect.options.length) return;
+    // Fixed-height native options retain keyboard navigation and scroll position.
+    const rowHeight = fontSelect.options[0].getBoundingClientRect().height + 1;
+    if (rowHeight <= 1) return;
+    const first = Math.max(0, Math.floor(fontSelect.scrollTop / rowHeight) - 1);
+    const end = Math.min(fontSelect.options.length, first + Math.ceil(fontSelect.clientHeight / rowHeight) + 3);
+    const visible = new Set();
+    for (let index = first; index < end; index++) {
+      const option = fontSelect.options[index];
+      if (option.value && !option.disabled) visible.add(option);
+    }
+    for (const option of previewedFontOptions) {
+      if (visible.has(option)) continue;
+      option.style.removeProperty("font-family");
+      previewedFontOptions.delete(option);
+    }
+    for (const option of visible) {
+      if (previewedFontOptions.has(option)) continue;
+      option.style.fontFamily = quoteFontFamily(option.value);
+      previewedFontOptions.add(option);
+    }
+  });
 }
 
 function applyAppearance(appearance, fontFamily = appearance?.fontFamily || "") {
@@ -112,6 +145,8 @@ function replaceOptions(select, options, selectedValue) {
 function resolveInstalledFontFamily(fontFamily) {
   const requested = String(fontFamily || "").trim();
   if (!requested) return "";
+  // Keep the saved choice while discovery is pending or unavailable.
+  if (!fontsReady || installedFonts.length === 0) return requested;
   const exact = installedFonts.find(
     (font) => font.toLocaleLowerCase("en") === requested.toLocaleLowerCase("en")
   );
@@ -137,26 +172,49 @@ function updateFontPreview() {
 
 function renderFonts() {
   const query = fontSearch.value.trim().toLocaleLowerCase("ko");
+  if (lastFontRender?.fonts === installedFonts && lastFontRender.query === query
+    && lastFontRender.selected === selectedFont && lastFontRender.ready === fontsReady
+    && lastFontRender.failed === fontsFailed) {
+    updateFontPreview();
+    return;
+  }
+  lastFontRender = { fonts: installedFonts, query, selected: selectedFont, ready: fontsReady, failed: fontsFailed };
   const filteredFonts = query
     ? installedFonts.filter((font) => font.toLocaleLowerCase("ko").includes(query))
     : installedFonts;
   const options = [createFontOption("시스템 기본", "")];
 
   if (selectedFont && !filteredFonts.includes(selectedFont)) {
-    options.push(createFontOption(`${selectedFont} · 현재`, selectedFont, selectedFont));
+    options.push(createFontOption(`${selectedFont} · 현재`, selectedFont));
   }
-  options.push(...filteredFonts.map((font) => createFontOption(font, font, font)));
-  if (query && filteredFonts.length === 0) {
+  options.push(...filteredFonts.map((font) => createFontOption(font, font)));
+  if (fontsReady && query && filteredFonts.length === 0) {
     const empty = new Option("검색 결과 없음", "__empty__");
     empty.disabled = true;
     options.push(empty);
   }
 
   replaceOptions(fontSelect, options, selectedFont);
-  $("#font-count").textContent = query
+  previewedFontOptions.clear();
+  fontSelect.setAttribute("aria-busy", String(!fontsReady && !fontsFailed));
+  $("#font-count").textContent = !fontsReady ? (fontsFailed ? "조회 실패" : "불러오는 중") : query
     ? `${filteredFonts.length} / ${installedFonts.length}개`
     : `${installedFonts.length}개`;
   updateFontPreview();
+  scheduleFontPreviews();
+}
+
+async function loadFonts() {
+  try {
+    const response = await api.fonts();
+    if (!response?.ok || !Array.isArray(response.data)) throw new Error("fonts unavailable");
+    installedFonts = response.data;
+    fontsReady = true;
+    selectedFont = resolveInstalledFontFamily(selectedFont);
+  } catch {
+    fontsFailed = true;
+  }
+  if (state) renderFonts();
 }
 
 function renderGeneral({ resetAppearance = false } = {}) {
@@ -171,7 +229,6 @@ function renderGeneral({ resetAppearance = false } = {}) {
     state.petKey
   );
   $("#bubble-mode").value = state.activityBubbleMode;
-  $("#follow").checked = state.followMouse;
   $("#autostart").checked = state.autoStart;
   $("#work-mode").checked = Boolean(state.appearance.workMode);
 
@@ -455,11 +512,22 @@ function registerNavigation() {
 }
 
 function registerAppearanceControls() {
-  fontSearch.addEventListener("input", renderFonts);
+  fontSearch.addEventListener("input", () => {
+    clearTimeout(fontSearchTimer);
+    fontSearchTimer = setTimeout(renderFonts, 100);
+  });
+  fontSelect.addEventListener("scroll", scheduleFontPreviews, { passive: true });
+  window.addEventListener("resize", scheduleFontPreviews);
+  const fontVisibility = new IntersectionObserver(([entry]) => {
+    fontListVisible = entry.isIntersecting;
+    scheduleFontPreviews();
+  });
+  fontVisibility.observe(fontSelect);
   fontSelect.addEventListener("change", () => {
     if (fontSelect.value === "__empty__") return;
     selectedFont = fontSelect.value;
     updateFontPreview();
+    scheduleFontPreviews();
   });
   fontSizeInput.addEventListener("input", () => {
     selectedFontSize = Number(fontSizeInput.value) || 12;
@@ -475,7 +543,6 @@ function registerAppearanceControls() {
         workMode: $("#work-mode").checked,
         petKey: $("#pet").value,
         activityBubbleMode: $("#bubble-mode").value,
-        followMouse: $("#follow").checked,
         autoStart: $("#autostart").checked,
         bubbleBgColor: $("#bubble-bg-color").value.trim() || null,
         bubbleTextColor: $("#bubble-text-color").value.trim() || null,
@@ -621,11 +688,9 @@ async function initialize() {
   registerProviderControls();
   registerAppearanceUpdates();
 
+  void loadFonts();
   try {
-    const [fontResponse, settingsResponse] = await Promise.all([api.fonts(), api.get()]);
-    installedFonts = fontResponse?.ok && Array.isArray(fontResponse.data)
-      ? fontResponse.data
-      : [];
+    const settingsResponse = await api.get();
     if (!settingsResponse?.ok) {
       throw new Error(responseError(settingsResponse, "설정을 불러오지 못했습니다."));
     }

@@ -40,6 +40,30 @@ function build(id, input = {}) {
   });
 }
 
+for (const id of ["codex", "claude", "agy", "grok"]) test(`${id} resumes only an exact native session and retains permission flags`, () => {
+  const cliSessionId = "11111111-2222-4333-8444-555555555555";
+  for (const permissionMode of ["chat", "workspace-read", "workspace-write"]) {
+    const base = build(id, { permissionMode, workspace: WORKSPACE });
+    if (!base.ok) continue;
+    const resumed = build(id, { permissionMode, workspace: WORKSPACE, cliSessionId });
+    assert.equal(resumed.ok, true);
+    assert.equal(resumed.cwd, base.cwd);
+    assert.ok(!resumed.argv.includes("--last"));
+    assert.ok(!resumed.argv.includes("--continue"));
+    assert.ok(!resumed.argv.some(arg => /bypass|dangerously/.test(arg)));
+    if (id === "codex") {
+      assert.deepEqual(resumed.argv.slice(-3), ["resume", cliSessionId, "-"]);
+      assert.deepEqual(resumed.argv.slice(0, -3), base.argv.filter(arg => arg !== "-"));
+      assert.ok(resumed.argv.indexOf("--sandbox") < resumed.argv.indexOf("resume"));
+    } else {
+      assert.deepEqual(resumed.argv, [...base.argv, id === "agy" ? "--conversation" : "--resume", cliSessionId]);
+    }
+  }
+  for (const cliSessionId of ["--last", "../other", "id & echo unsafe", {}]) {
+    assert.equal(build(id, { cliSessionId }).ok, false);
+  }
+});
+
 test("claude chat 모드: 도구 전면 차단 + strict mcp + stream-json", () => {
   const result = build("claude");
   assert.equal(result.ok, true);
@@ -49,7 +73,7 @@ test("claude chat 모드: 도구 전면 차단 + strict mcp + stream-json", () =
   assert.ok(toolsIndex >= 0);
   assert.equal(argv[toolsIndex + 1], "");
   assert.ok(argv.includes("--strict-mcp-config"));
-  assert.ok(argv.includes("--no-session-persistence"));
+  assert.ok(!argv.includes("--no-session-persistence"));
   assert.deepEqual(argv.slice(argv.indexOf("--output-format"), argv.indexOf("--output-format") + 2), [
     "--output-format",
     "stream-json",
@@ -90,14 +114,14 @@ test("default 모델/노력은 플래그를 생략한다", () => {
   assert.ok(!result.argv.includes("--effort"));
 });
 
-test("codex chat 모드: read-only 샌드박스 + 빈 채팅 cwd + json + ephemeral", () => {
+test("codex chat 모드: read-only 샌드박스 + 빈 채팅 cwd + json + 세션 저장", () => {
   const result = build("codex", { outputFile: "C:\\tmp\\out.txt" });
   assert.equal(result.ok, true);
   assert.equal(result.cwd, CHAT_CWD);
   const argv = result.argv;
   assert.equal(argv[argv.indexOf("--sandbox") + 1], "read-only");
   assert.ok(argv.includes("--json"));
-  assert.ok(argv.includes("--ephemeral"));
+  assert.ok(!argv.includes("--ephemeral"));
   assert.equal(argv[argv.indexOf("-o") + 1], "C:\\tmp\\out.txt");
   assert.ok(!argv.includes("--cd"));
   assert.equal(result.enforcement, "sandbox");

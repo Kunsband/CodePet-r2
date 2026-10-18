@@ -46,12 +46,13 @@ test("설정 창은 테마 선택 없이 색상, 설치 글꼴, provider 계정�
   assert.match(mainJs, /path\.join\(__dirname, "default-pet", "spritesheet\.webp"\)/);
 });
 
-test("설정 Footer는 짧은 창에서도 본문을 덮지 않고 글꼴 목록은 각 글꼴로 표시된다", () => {
+test("설정 Footer는 본문을 덮지 않고 보이는 글꼴만 미리보기한다", () => {
   const panelActionsRule = settingsCss.match(/\.panel-actions\s*\{[^}]*\}/)?.[0] || "";
   assert.doesNotMatch(panelActionsRule, /position:\s*sticky|bottom\s*:/);
   assert.match(settingsJs, /function createFontOption/);
-  assert.match(settingsJs, /option\.style\.fontFamily\s*=\s*fontFamily/);
-  assert.match(settingsJs, /filteredFonts\.map\(\(font\) => createFontOption\(font, font, font\)\)/);
+  assert.match(settingsJs, /option\.style\.fontFamily\s*=\s*quoteFontFamily\(option\.value\)/);
+  assert.match(settingsJs, /filteredFonts\.map\(\(font\) => createFontOption\(font, font\)\)/);
+  assert.match(settingsJs, /IntersectionObserver/);
 });
 
 test("말풍선 글자 색상은 작업 제목과 모델 상태까지 함께 바꾼다", () => {
@@ -61,17 +62,13 @@ test("말풍선 글자 색상은 작업 제목과 모델 상태까지 함께 바
   assert.match(bubbleCss, /\.activity-row-label\s*\{[^}]*color:\s*var\(--bubble-ink\)/s);
 });
 
-test("마우스 따라가기와 수동 일시정지는 설정 파일에 저장하고 시작 시 복원한다", () => {
+test("수동 일시정지는 설정 파일에 저장하고 시작 시 복원한다", () => {
   assert.match(mainJs, /restoreMovementPreferences\(\)/);
   assert.match(mainJs, /writeSettings\(movementPreferencesPatch\(runtime\)\)/);
   assert.match(mainJs, /persistMovementPreferences\(\)/);
 });
 
-test("클릭·작업 상태·정지 랜덤·마우스 둘러보기·2차원 배회를 동작 규칙대로 연결한다", () => {
-  const animationPolicy = mainJs.slice(
-    mainJs.indexOf("function syncMovementAnimation"),
-    mainJs.indexOf("function schedulePhase")
-  );
+test("클릭·작업 상태·정지 랜덤·2차원 배회를 동작 규칙대로 연결한다", () => {
   assert.match(mainJs, /isActivityOnlyReason\(reason\)/);
   assert.match(rendererJs, /requestReaction\("jumping"\)/);
   assert.match(rendererJs, /requestReaction\("waving"\)/);
@@ -82,13 +79,10 @@ test("클릭·작업 상태·정지 랜덤·마우스 둘러보기·2차원 배�
   assert.match(mainJs, /function chooseRandomIdleState\(\)/);
   assert.match(mainJs, /states = \["waiting", "failed"\]/);
   assert.match(mainJs, /states\.push\("lookRow10", "lookRow9"\)/);
-  assert.match(mainJs, /function ensureMouseLookState\(\)/);
-  assert.ok(
-    animationPolicy.indexOf("runtime.followMouse") <
-      animationPolicy.indexOf("getActivityPetState()")
-  );
+  assert.doesNotMatch(mainJs, /runtime\.followMouse|ensureMouseLookState|toggleFollowMouse/);
+  assert.doesNotMatch(settingsHtml, /id="follow"|마우스 따라가기/);
+  assert.doesNotMatch(settingsJs, /followMouse|#follow/);
   assert.match(mainJs, /runtime\.movementPhase === "walking"/);
-  assert.match(mainJs, /directionIndexFromVector\(deltaX, deltaY\)/);
   assert.match(mainJs, /createRoamingVector\(\)/);
   assert.match(mainJs, /advanceRoamingPosition\(\{/);
   assert.doesNotMatch(mainJs, /targetWorkArea/);

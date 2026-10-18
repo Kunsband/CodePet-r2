@@ -70,4 +70,29 @@ function readMessagePage(file, {
   }
 }
 
-module.exports = { readMessagePage, HISTORY_PAGE_SIZE };
+// Read only messages not yet delivered to this native session. The end ID fixes
+// the broadcast snapshot even if another participant finishes while preparing.
+function readMessageRange(file, { afterId, throughId, agentId }) {
+  if (!afterId || !throughId) return null;
+  if (afterId === throughId) return [];
+  const fd = fs.openSync(file, "r");
+  try {
+    let within = false;
+    const messages = [];
+    for (const line of reverseLines(fd, fs.fstatSync(fd).size)) {
+      let event;
+      try { event = JSON.parse(line.raw.toString("utf8")); } catch { continue; }
+      const message = event?.kind === "message" ? event.message : null;
+      if (!message) continue;
+      if (message.id === throughId) within = true;
+      if (!within) continue;
+      if (message.id === afterId) return messages.reverse();
+      // This participant's own answers already live in the native session.
+      if (message.authorType !== "system" && !message.error &&
+          !(message.authorType === "agent" && message.author === agentId)) messages.push(message);
+    }
+    return null; // An anchor was removed: never silently skip missing context.
+  } finally { fs.closeSync(fd); }
+}
+
+module.exports = { readMessagePage, readMessageRange, HISTORY_PAGE_SIZE };

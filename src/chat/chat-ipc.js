@@ -11,6 +11,7 @@ const { roomAgentsFromCapabilities } = require("./chat-agents");
 const { identityPatch, aliasKey } = require("./chat-agent-identity");
 const { selectionError } = require("../providers/provider-model-catalog");
 const { ChatRoom } = require("./chat-room");
+const { ChatActivity } = require("./chat-activity");
 const { CodexChatAccounts, FILE_AUTH_ARGS } = require("./codex-chat-accounts");
 const { SavedChatAccounts } = require("./saved-chat-accounts");
 const { buildAgentInvocation, PERMISSION_MODES, INLINE_TEXT_LIMIT } = require("./chat-argv");
@@ -19,7 +20,9 @@ const { runAgentProcess } = require("./chat-agent-runner");
 const { withRealPwshPath } = require("./windows-pwsh-path");
 const { ChatTraceStore } = require("./chat-traces");
 const { runWithTraceAccess } = require("./chat-trace-access");
-const { DEFAULT_MAX_MESSAGES } = require("./chat-prompt");
+const { DEFAULT_MAX_MESSAGES, buildAgentPrompt } = require("./chat-prompt");
+const { NativeSessionLink } = require("./chat-native-sessions");
+const { readMessageRange } = require("./chat-history");
 const { GrokDockerRuntime } = require("../grok-docker-runtime");
 const {
   importAttachment,
@@ -133,6 +136,7 @@ function createChatFeature(options) {
   let traceStore = null;
   let storeError = null;
   let capabilityService = null;
+  let providerRefresh = null;
   const accountServices = new Map();
   const accountProviders = ["codex", "claude", "grok"];
   function accountService(providerId = "codex") {
@@ -186,6 +190,7 @@ function createChatFeature(options) {
   let chatWindow = null;
   let shuttingDown = false;
   const rooms = new Map();
+  const activity = new ChatActivity(options.onActivity);
   // 세션별 "아직 전송 전" 첨부: id → 내부 레코드(fileName 포함)
   const pendingAttachments = new Map();
 
@@ -211,6 +216,35 @@ function createChatFeature(options) {
       grokDockerProbe: () => grokDockerRuntime.probe({ force: true }),
     });
     return capabilityService;
+  }
+
+  function providerRecords() {
+    const service = ensureCapabilityService();
+    return service.defs.map((def) => service.getRecord(def.id)).filter(Boolean);
+  }
+
+  function refreshProvidersInBackground() {
+    if (providerRefresh || shuttingDown) return;
+    // Yield so session selection/creation can paint before any CLI startup work.
+    providerRefresh = new Promise((resolve) => setImmediate(resolve)).then(async () => {
+      await ensureCapabilityService().discover();
+      for (const sessionId of rooms.keys()) {
+        if (shuttingDown) return;
+        await discoverParticipants(store.readMeta(sessionId));
+        refreshRoomAgents(sessionId);
+      }
+    }).catch((error) => {
+      console.warn("[code-pet] CLI 탐지 실패:", error?.message || String(error));
+    }).finally(() => {
+      providerRefresh = null;
+      if (shuttingDown) return;
+      const sessionId = getActiveSessionId();
+      broadcast("chat:providers-changed", {
+        sessionId,
+        providers: toPublicProviders(participantProviders(store?.readMeta(sessionId))),
+        diagnostics: toDiagnostics(providerRecords()),
+      });
+    });
   }
 
   function broadcast(channel, payload) {
@@ -266,7 +300,7 @@ function createChatFeature(options) {
   }
 
   function makeRunAgent(sessionId) {
-    return ({ agent, prompt, runId, attachments, emitEvent, autoApprove = false }) => {
+    return ({ agent, prompt, promptContext, runId, attachments, emitEvent, autoApprove = false }) => {
       const meta = store?.readMeta(sessionId);
       const record = participantRecord(meta, agent.id);
       const providerId = agent.providerId || agent.id;
@@ -291,7 +325,7 @@ function createChatFeature(options) {
         );
       }
 
-      const invocation = buildAgentInvocation({
+      const invocationInput = {
         provider: { ...record, id: providerId },
         permissionMode: meta.permissionMode || "chat",
         workspace: meta.workspace || null,
@@ -302,7 +336,8 @@ function createChatFeature(options) {
         attachmentsDir,
         outputFile,
         autoApprove: (meta.permissionMode || "chat") === "workspace-write" && Boolean(config.autoApprove || autoApprove),
-      });
+      };
+      const invocation = buildAgentInvocation(invocationInput);
       if (!invocation.ok) {
         return {
           promise: Promise.resolve({ ok: false, error: invocation.error }),
@@ -319,6 +354,9 @@ function createChatFeature(options) {
       if (extraLines.length > 0) fullPrompt = `${prompt}\n${extraLines.join("\n")}`;
 
       const permissionMode = meta.permissionMode || "chat";
+      let native = null;
+      let cancelled = false;
+      const throughId = promptContext?.messages?.at(-1)?.id || null;
       const run = runWithTraceAccess({
         traceStore,
         sessionId,
@@ -326,14 +364,42 @@ function createChatFeature(options) {
         runId,
         prompt: fullPrompt,
         emitEvent,
-        startRun: ({ prompt: nextPrompt, onTrace, onEvent }) => {
+        startRun: ({ prompt: nextPrompt, continuationPrompt, traceContext, onTrace, onEvent }) => {
           const service = config.profileKey ? accountService(providerId) : null;
           const account = service?.prepare(config.profileKey);
           const docker = providerId === "grok" && config.profileKey && permissionMode !== "chat" ? service.runtime(config.profileKey) : grokDockerRuntime;
+          const env = account?.env || process.env;
+          const home = providerId === "codex" ? env.CODEX_HOME || path.join(os.homedir(), ".codex")
+            : providerId === "claude" ? env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude")
+              : providerId === "grok" ? (permissionMode === "chat" ? env.GROK_HOME || path.join(os.homedir(), ".grok") : docker.authVolume)
+                : os.homedir();
+          if (!native) {
+            const switcher = providerId === "codex" ? options.getCodexAccountSwitcher?.() : options.getAccountSwitcher?.(providerId);
+            const activeKey = config.profileKey || switcher?.listProfiles?.().find(profile => profile.active)?.key
+              || switcher?.currentAccountHint?.() || null;
+            native = new NativeSessionLink(store, sessionId, agent.id, {
+              providerId, profileKey: config.profileKey || null, activeKey, home,
+              cwd: invocation.cwd, permissionMode, autoApprove: invocationInput.autoApprove,
+              model: agent.model || "default", effort: agent.effort || "default",
+            });
+          }
+          let processPrompt = nextPrompt;
+          if (continuationPrompt && native.cliSessionId) {
+            processPrompt = continuationPrompt;
+          } else if (!continuationPrompt && native.cliSessionId && native.lastMessageId && promptContext) {
+            const messages = readMessageRange(store.transcriptPath(sessionId), {
+              afterId: native.lastMessageId, throughId, agentId: agent.id,
+            });
+            if (messages === null) throw new Error("CLI 세션의 대화 연결 위치를 찾지 못했습니다.");
+            processPrompt = [buildAgentPrompt({ ...promptContext, messages, maxMessages: Infinity, continued: true }),
+              ...extraLines, traceContext].filter(Boolean).join("\n");
+          }
+          const continuedInvocation = buildAgentInvocation({ ...invocationInput, cliSessionId: native.cliSessionId });
+          if (!continuedInvocation.ok) throw new Error(continuedInvocation.error);
           const execution = resolveAgentExecution({
             agentId: providerId,
             permissionMode,
-            invocation,
+            invocation: continuedInvocation,
             record,
             workspace: meta.workspace || null,
             chatCwd: store.runtimeChatDir(),
@@ -341,17 +407,31 @@ function createChatFeature(options) {
             grokDockerRuntime: docker,
           });
 
+          const nativeSessions = new Set();
+          let linkError = null;
           const processRun = runAgentProcess({
             commandPath: execution.commandPath,
             needsShell: execution.needsShell,
             argv: account && providerId === "codex" ? [...execution.argv, ...FILE_AUTH_ARGS] : execution.argv,
             env: providerId === "claude" ? withRealPwshPath(account?.env || process.env) : account?.env,
-            prompt: nextPrompt,
+            prompt: processPrompt,
             promptTransport: execution.promptTransport,
             promptFileFlag: execution.promptFileFlag,
             cwd: execution.cwd,
             outputFile,
-            parseLine: createLineParser(providerId, onTrace),
+            parseLine: createLineParser(providerId, onTrace, (cliSessionId) => {
+              if (cancelled) return;
+              if (nativeSessions.has(cliSessionId)) return;
+              nativeSessions.add(cliSessionId);
+              try { native.observe(cliSessionId); }
+              catch (error) { linkError = error; }
+              store.appendEvent(sessionId, {
+                kind: "cli-session", providerId, agentId: agent.id, runId, cliSessionId,
+                profileKey: config.profileKey || null,
+                cwd: execution.cwd,
+                home,
+              });
+            }),
             onEvent,
             timeoutMs: options.timeoutMs,
             maxOutputBytes: execution.maxOutputBytes,
@@ -359,7 +439,11 @@ function createChatFeature(options) {
             runId,
             onCancel: execution.onCancel,
           });
-          return { ...processRun, promise: processRun.promise.finally(() => account?.finish?.(
+          return { ...processRun, promise: processRun.promise.then((result) => {
+            if (linkError) return { ...result, ok: false, error: linkError.message };
+            if (result.ok && !result.cancelled && !cancelled) native.delivered(throughId);
+            return result;
+          }).finally(() => account?.finish?.(
             providerId === "grok" && permissionMode !== "chat" ? docker : null
           )) };
         },
@@ -385,7 +469,7 @@ function createChatFeature(options) {
             ...(workspaceChangeSet ? { workspaceChangeSet } : {}),
           };
         }),
-        cancel: run.cancel,
+        cancel: () => { cancelled = true; run.cancel(); },
       };
     };
   }
@@ -444,10 +528,16 @@ function createChatFeature(options) {
       broadcast("chat:message", { sessionId, message: outbound });
       broadcast("chat:sessions-changed", sessionsPayload());
     });
-    room.on("typing", (payload) => broadcast("chat:typing", { sessionId, ...payload }));
+    room.on("typing", (payload) => {
+      activity.typing(sessionId, payload);
+      broadcast("chat:typing", { sessionId, ...payload });
+    });
     room.on("turn-state", (payload) => broadcast("chat:turn-state", { sessionId, ...payload }));
     room.on("reset", () => broadcast("chat:reset", { sessionId }));
-    room.on("run-event", (payload) => broadcast("chat:run-event", { sessionId, ...payload }));
+    room.on("run-event", (payload) => {
+      activity.event(sessionId, payload);
+      broadcast("chat:run-event", { sessionId, ...payload });
+    });
     room.on("agents", (agents) => broadcast("chat:agents", { sessionId, agents }));
     room.on("approval-request", (payload) => broadcast("chat:approval-request", { sessionId, ...payload }));
     room.on("busy", (busy) => {
@@ -495,17 +585,19 @@ function createChatFeature(options) {
     };
   }
 
-  async function fullState({ refreshProviders = false } = {}) {
+  async function fullState({ refreshProviders = false, backgroundProviders = false } = {}) {
     ensureStore();
     const service = ensureCapabilityService();
-    const records = await service.discover({ force: refreshProviders });
+    if (backgroundProviders && !refreshProviders) refreshProvidersInBackground();
+    else await service.discover({ force: refreshProviders });
+    const records = providerRecords();
 
     if (store && !store.readOnly && store.listSessions().length === 0) {
       store.createSession({});
     }
     const activeSessionId = getActiveSessionId();
     if (activeSessionId) {
-      await discoverParticipants(store.readMeta(activeSessionId), refreshProviders);
+      if (!backgroundProviders || refreshProviders) await discoverParticipants(store.readMeta(activeSessionId), refreshProviders);
       refreshRoomAgents(activeSessionId);
     }
     return {
@@ -513,6 +605,7 @@ function createChatFeature(options) {
       error: storeError || null,
       appearance: options.getAppearance?.(),
       providers: toPublicProviders(records),
+      providersLoading: Boolean(providerRefresh),
       diagnostics: toDiagnostics(records),
       permissionModes: PERMISSION_MODES,
       ...sessionsPayload(),
@@ -575,8 +668,8 @@ function createChatFeature(options) {
         if (!ensureStore()) throw new Error(storeError || "저장소를 사용할 수 없습니다.");
         const meta = store.createSession({});
         setActiveSessionId(meta.id);
-        await ensureCapabilityService().discover();
-        return { ...sessionsPayload(), session: sessionState(meta.id) };
+        refreshProvidersInBackground();
+        return { ...sessionsPayload(), providersLoading: Boolean(providerRefresh), session: sessionState(meta.id) };
       })
     );
 
@@ -585,10 +678,9 @@ function createChatFeature(options) {
       wrap(async ({ sessionId }) => {
         requireSession(sessionId);
         setActiveSessionId(sessionId);
-        await ensureCapabilityService().discover();
-        await discoverParticipants(store.readMeta(sessionId));
+        refreshProvidersInBackground();
         refreshRoomAgents(sessionId);
-        return { ...sessionsPayload(), session: sessionState(sessionId) };
+        return { ...sessionsPayload(), providersLoading: Boolean(providerRefresh), session: sessionState(sessionId) };
       })
     );
 
@@ -1059,6 +1151,7 @@ function createChatFeature(options) {
   // 앱 종료: 진행 중이던 세션은 interrupted로 남겨 다음 시작 때 안내합니다.
   function shutdown() {
     shuttingDown = true;
+    activity.clear();
     grokDockerRuntime.clearWorkspaceChanges();
     for (const [sessionId, room] of rooms) {
       try {

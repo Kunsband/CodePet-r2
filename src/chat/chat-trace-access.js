@@ -87,6 +87,8 @@ function runWithTraceAccess({ traceStore, sessionId, agentId, runId, prompt, sta
         if (cancelled) return { ok: false, cancelled: true, error: "중지됨" };
         active = startRun({
           prompt: [basePrompt, ...history].join("\n"),
+          continuationPrompt: reads > 0 ? history[history.length - 1] : null,
+          traceContext: traceStore ? traceInstructions(entries.filter(entry => entry.id !== collector.entry?.id)) : "",
           onTrace: (event) => collector.add(event),
           onEvent: traceEventFilter(emitEvent),
         });

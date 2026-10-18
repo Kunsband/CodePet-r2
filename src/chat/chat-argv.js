@@ -46,7 +46,6 @@ function canInline(attachment) {
 function claudeArgv({ permissionMode, workspace, model, effort, attachmentsDir, hasPathDeliveries, autoApprove }) {
   const argv = [
     "-p",
-    "--no-session-persistence",
     "--output-format",
     "stream-json",
     "--include-partial-messages",
@@ -75,8 +74,9 @@ function claudeArgv({ permissionMode, workspace, model, effort, attachmentsDir, 
   return argv;
 }
 
-function codexArgv({ permissionMode, workspace, model, effort, outputFile, imagePaths, autoApprove }) {
-  const argv = ["exec", "-", "--skip-git-repo-check", "--ephemeral", "--color", "never", "--json"];
+function codexArgv({ permissionMode, workspace, model, effort, outputFile, imagePaths, autoApprove, cliSessionId }) {
+  // exec-only options must precede the resume subcommand (notably sandbox/cd/color).
+  const argv = ["exec", ...(cliSessionId ? [] : ["-"]), "--skip-git-repo-check", "--color", "never", "--json"];
   if (outputFile) argv.push("-o", outputFile);
   if (model) argv.push("--model", model);
   if (effort) argv.push("-c", `model_reasoning_effort=${effort}`);
@@ -84,14 +84,13 @@ function codexArgv({ permissionMode, workspace, model, effort, outputFile, image
 
   if (permissionMode === "chat") {
     argv.push("--sandbox", "read-only");
-    return argv;
-  }
-  if (permissionMode === "workspace-read") {
+  } else if (permissionMode === "workspace-read") {
     argv.push("--sandbox", "read-only", "--cd", workspace);
-    return argv;
+  } else {
+    if (autoApprove) argv.push("--dangerously-bypass-approvals-and-sandbox", "--cd", workspace);
+    else argv.push("--sandbox", "workspace-write", "--cd", workspace);
   }
-  if (autoApprove) argv.push("--dangerously-bypass-approvals-and-sandbox", "--cd", workspace);
-  else argv.push("--sandbox", "workspace-write", "--cd", workspace);
+  if (cliSessionId) argv.push("resume", cliSessionId, "-");
   return argv;
 }
 
@@ -274,6 +273,7 @@ function buildAgentInvocation(input = {}) {
     attachmentsDir = null,
     outputFile = null,
     autoApprove = false,
+    cliSessionId = null,
   } = input;
 
   if (!provider || provider.status !== "cli") {
@@ -290,6 +290,9 @@ function buildAgentInvocation(input = {}) {
   }
   if (!chatCwd) {
     return { ok: false, error: "채팅 전용 작업 디렉터리가 없습니다." };
+  }
+  if (cliSessionId !== null && (typeof cliSessionId !== "string" || !/^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(cliSessionId))) {
+    return { ok: false, error: "CLI 세션 ID가 올바르지 않습니다." };
   }
 
   const permissionInfo = provider.permissions?.[permissionMode];
@@ -338,6 +341,7 @@ function buildAgentInvocation(input = {}) {
       outputFile,
       imagePaths,
       autoApprove,
+      cliSessionId,
     });
   } else if (provider.id === "agy") {
     argv = agyArgv({
@@ -356,6 +360,9 @@ function buildAgentInvocation(input = {}) {
   }
 
   if (!argv) return { ok: false, error: `${provider.name}는 "${permissionMode}" 권한 모드를 지원하지 않습니다.` };
+  if (cliSessionId && provider.id !== "codex") {
+    argv.push(provider.id === "agy" ? "--conversation" : "--resume", cliSessionId);
+  }
 
   return {
     ok: true,

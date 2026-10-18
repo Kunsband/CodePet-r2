@@ -3,6 +3,22 @@ const assert = require("node:assert/strict");
 
 const { parseClaudeLine, parseCodexLine, parseAgyLine, parseGrokLine, createLineParser } = require("../src/chat/chat-events");
 
+test("native CLI session IDs are recorded without turning them into chat output", () => {
+  const id = "11111111-2222-4333-8444-555555555555";
+  for (const [provider, event] of [
+    ["codex", { type: "thread.started", thread_id: id }],
+    ["claude", { type: "system", subtype: "init", session_id: id }],
+    ["agy", { event: "init", conversation_id: id }],
+  ]) {
+    const sessions = [];
+    const parser = createLineParser(provider, null, value => sessions.push(value));
+    assert.equal(parser(JSON.stringify(event)), null);
+    assert.deepEqual(sessions, [id]);
+    parser(JSON.stringify({ ...event, thread_id: "../../invalid", session_id: "../../invalid", conversation_id: "../../invalid" }));
+    assert.deepEqual(sessions, [id]);
+  }
+});
+
 test("claude: 텍스트 델타 스트림 이벤트", () => {
   const line = JSON.stringify({
     type: "stream_event",
@@ -113,4 +129,10 @@ test("grok Docker 변경 세트는 일반 답변과 분리된 내부 이벤트�
     { kind: "workspace-change-manifest", manifest }
   );
   assert.equal(parseGrokLine("CODEPET_GROK_CHANGESET_V1 {broken").kind, "error");
+});
+
+test("failed native session linking does not stop CLI output", () => {
+  const parser = createLineParser("codex", null, () => { throw new Error("disk unavailable"); });
+  assert.doesNotThrow(() => parser(JSON.stringify({ type: "thread.started", thread_id: "11111111-2222-4333-8444-555555555555" })));
+  assert.deepEqual(parser(JSON.stringify({ type: "item.completed", item: { type: "agent_message", text: "done" } })), { kind: "final", text: "done" });
 });

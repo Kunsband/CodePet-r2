@@ -19,6 +19,11 @@ for (const providerId of ["claude", "grok"]) test(`${providerId} accounts retain
   const calls = [];
   t.mock.method(runner, "runAgentProcess", (input) => {
     calls.push(input);
+    if (["claude", "grok"].includes(providerId)) {
+      assert.ok(!input.argv.includes("--no-session-persistence"));
+      const resume = input.argv.indexOf("--resume");
+      input.parseLine(JSON.stringify({ type: "system", subtype: "init", session_id: resume >= 0 ? input.argv[resume + 1] : `11111111-2222-4333-8444-${String(calls.length).padStart(12, "0")}` }));
+    }
     input.parseLine(JSON.stringify({ type: "assistant", message: { content: [{ type: "tool_use", id: "fixture-id", name: "Read", input: { file_path: "fixture.txt" } }] } }));
     return { promise: Promise.resolve({ ok: true, text: "finished" }), cancel() {} };
   });
@@ -65,17 +70,33 @@ for (const providerId of ["claude", "grok"]) test(`${providerId} accounts retain
   assert.ok(!calls[0].argv.includes("cli_auth_credentials_store=file"));
   await invoke("chat:send", { sessionId, text: "@모두 확인해" });
   const state = await completed(3);
+  assert.ok(state.session.messages.filter(message => message.authorType === "agent").every(message => !message.error));
   assert.deepEqual(calls.slice(1).map((call) => path.basename(call.env[providerId === "claude" ? "CLAUDE_CONFIG_DIR" : "GROK_HOME"])).sort(), ["private-a", "private-b"]);
   assert.ok(calls.every((call) => call.commandPath === "same-cli"));
   assert.doesNotMatch(JSON.stringify(state), /private-a|private-b|auth\.json/);
   const { ChatTraceStore } = require("../src/chat/chat-traces");
   const traces = await new ChatTraceStore({ root }).list(sessionId);
   assert.deepEqual([...new Set(traces.map((trace) => trace.agentId))].sort(), [`${providerId}-2`, `${providerId}-3`]);
+  if (["claude", "grok"].includes(providerId)) {
+    const rows = (await fs.readFile(path.join(root, "sessions", sessionId, "transcript.jsonl"), "utf8")).trim().split("\n").map(JSON.parse);
+    const native = rows.filter(row => row.kind === "cli-session");
+    assert.equal(native.length, 3);
+    assert.equal(new Set(native.map(row => row.cliSessionId)).size, 2);
+    for (const row of native) {
+      assert.equal(row.home, path.join(root, `private-${row.profileKey}`));
+      assert.equal(row.agentId, `${providerId}-${row.profileKey === "a" ? 2 : 3}`);
+    }
+  }
   feature.shutdown();
   feature = createChatFeature(options);
   feature.registerIpcHandlers();
   const reopened = await invoke("chat:state");
   assert.equal(reopened.session.agents.find((agent) => agent.id === `${providerId}-2`).model, "model-a");
+  await invoke("chat:send", { sessionId, text: `@${providerId}-2 이어서 확인해` });
+  const continued = await completed(4);
+  assert.ok(!continued.session.messages.at(-1).error);
+  assert.ok(calls.at(-1).argv.includes("11111111-2222-4333-8444-000000000001"));
+  assert.equal(calls.at(-1).env[providerId === "claude" ? "CLAUDE_CONFIG_DIR" : "GROK_HOME"], path.join(root, "private-a"));
   assert.equal((await invoke("chat:agent:remove", { sessionId, agentId: providerId })).ok, false);
   assert.equal((await invoke("chat:agent:remove", { sessionId, agentId: `${providerId}-2` })).ok, true);
   const replacement = await invoke("chat:agent:add", { sessionId, providerId, profileKey: "a" });

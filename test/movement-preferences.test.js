@@ -6,17 +6,14 @@ const {
   normalizeMovementPreferences,
 } = require("../src/movement-preferences");
 
-test("이동 설정은 명시적인 true만 복원하고 두 토글을 함께 저장한다", () => {
+test("이동 일시정지만 저장하고 이전 마우스 따라가기 설정은 무시한다", () => {
   assert.deepEqual(normalizeMovementPreferences({ followMouse: true, manualPaused: true }), {
-    followMouse: true,
     manualPaused: true,
   });
   assert.deepEqual(normalizeMovementPreferences({ followMouse: "true", manualPaused: 1 }), {
-    followMouse: false,
     manualPaused: false,
   });
   assert.deepEqual(movementPreferencesPatch({ followMouse: true, manualPaused: false }), {
-    followMouse: true,
     manualPaused: false,
   });
 });

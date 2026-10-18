@@ -18,10 +18,10 @@ function setup({ petVisible, taskbarVisible }) {
     tray: { getBounds: () => ({ x: 10, y: 20, width: 24, height: 24 }), setToolTip() {}, setContextMenu: (menu) => { calls.trayMenu = menu; } },
     usageWindows: { togglePopup: () => calls.popup++, toggleBar: () => calls.toggle++ },
     readSettings: () => ({ taskbarUsageVisible: taskbarVisible }),
-    runtime: { manualPaused: false, followMouse: false },
+    runtime: { manualPaused: false },
     isCodexProxyModeEnabled: () => false, isAutoLaunchEnabled: () => false,
   };
-  for (const name of ["openSettingsWindow", "openChatWindow", "showPetWindowFromTray", "hidePetWindowToTray", "setCodexProxyMode", "toggleManualPause", "toggleFollowMouse", "toggleAutoLaunch", "quitApp"]) context[name] = () => {};
+  for (const name of ["openSettingsWindow", "openChatWindow", "showPetWindowFromTray", "hidePetWindowToTray", "setCodexProxyMode", "toggleManualPause", "toggleAutoLaunch", "quitApp"]) context[name] = () => {};
   for (const name of ["buildProviderAccountSubmenu", "buildPetSelectionSubmenu", "buildManualMotionSubmenu"]) context[name] = () => [];
   vm.createContext(context);
   vm.runInContext(["buildAppMenu", "refreshTrayMenu", "showContextMenu"].map(declaration).join("\n"), context);
@@ -45,6 +45,7 @@ for (const petVisible of [true, false]) {
         toggle.click();
         assert.ok(items.some((item) => item.label === "모션 실행"));
         assert.ok(items.some((item) => item.label === "로그인 시 자동 실행"));
+        assert.ok(!items.some((item) => item.label === "마우스 따라가기"));
       }
       assert.equal(calls.popup, 2);
       assert.equal(calls.toggle, 2);

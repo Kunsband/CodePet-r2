@@ -509,8 +509,10 @@ input[type="search"]::placeholder {
 }
 
 #font option {
-  min-height: 24px;
-  padding: 5px 8px;
+  height: 28px;
+  min-height: 28px;
+  line-height: 18px;
+  padding: 4px 8px;
   border-radius: 4px;
   margin-bottom: 1px;
   cursor: pointer;

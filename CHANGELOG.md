@@ -1,5 +1,25 @@
 # Release notes / 릴리즈 노트
 
+## 1.0.12 — 2026-10-18
+
+### English
+
+- Fixed Space ending chat-name editing.
+- Open and switch chats without waiting for CLI discovery, and reduce typing lag during concurrent responses.
+- Reflect active chat work in the pet's animation.
+- Removed mouse-following behavior and its settings and menu controls.
+- Load the font list independently of settings and preview only visible fonts to reduce freezes.
+- Resume native CLI sessions per chat and participant across app restarts. Send only newly received messages, and keep trace lookups in the same session.
+
+### 한국어
+
+- 대화방 이름 편집이 스페이스 입력으로 끝나는 문제를 수정했습니다.
+- CLI 탐지를 기다리지 않고 대화방을 열고 전환하며, 여러 답변이 출력될 때 입력 지연을 줄였습니다.
+- 채팅에서 작업 중인 상태를 펫 모션에 반영합니다.
+- 마우스 따라보기 동작과 설정·메뉴 항목을 제거했습니다.
+- 글꼴 목록을 설정과 별도로 불러오고 보이는 글꼴만 미리보기해 멈칫하는 현상을 줄였습니다.
+- 대화방·참가자별 CLI 세션을 앱 재시작 후에도 이어 씁니다. 새로 받은 대화만 전달하고 작업 기록 조회도 같은 세션에서 이어갑니다.
+
 ## 1.0.11 — 2026-10-15
 
 ### English

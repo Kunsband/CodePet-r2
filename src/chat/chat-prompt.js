@@ -55,6 +55,7 @@ function buildAgentPrompt({
   activeAgentIds = [],
   mentionsEnabled = !discussion,
   extraLines = [],
+  continued = false,
 }) {
   const agentsById = new Map(agents.map((entry) => [entry.id, entry]));
   const others = agents.filter((entry) => entry.id !== agent.id);
@@ -110,6 +111,7 @@ function buildAgentPrompt({
   }
   lines.push("");
   lines.push("=== 대화 ===");
+  if (continued) lines.push("같은 CLI 세션의 이전 작업과 대화를 이어갑니다. 아래에는 이후 새로 받은 대화만 있습니다. 이전 명령이나 완료한 작업을 반복하지 마세요.");
   if (omitted > 0) lines.push(`(이전 메시지 ${omitted}개 생략)`);
   for (const message of recent) {
     lines.push(

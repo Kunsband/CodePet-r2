@@ -1174,6 +1174,7 @@ textarea:focus-visible {
 
 .session-select {
   display: grid;
+  cursor: pointer;
   gap: 2px;
   width: 100%;
   text-align: left;

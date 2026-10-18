@@ -477,7 +477,7 @@ class ChatRoom extends EventEmitter {
     }
 
     const promptAgents = this.enabledAgents();
-    const prompt = buildAgentPrompt({
+    const promptContext = {
       agent,
       agents: promptAgents,
       messages: context.promptMessages || this.promptMessages(),
@@ -488,7 +488,8 @@ class ChatRoom extends EventEmitter {
       broadcast,
       activeAgentIds: this.currentTurns.map((item) => item.agent.id),
       mentionsEnabled: !context.discussion,
-    });
+    };
+    const prompt = buildAgentPrompt(promptContext);
 
     let result;
     let runId;
@@ -512,6 +513,7 @@ class ChatRoom extends EventEmitter {
         run = this.runAgent({
           agent,
           prompt,
+          promptContext,
           runId,
           attachments: context.attachments || [],
           emitEvent,
