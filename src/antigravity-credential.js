@@ -7,7 +7,7 @@ const credentialStore = require("./credential-store");
 // AGY CLI의 live 자격 증명 위치입니다. agy는 zalando/go-keyring을 쓰므로 OS마다 저장 형식이 다릅니다.
 // - Windows: 자격 증명 관리자 "gemini:antigravity" (go-keyring의 service:user 이름)
 // - macOS: Keychain service "gemini", account "antigravity", 값 앞에 "go-keyring-base64:" 접두사
-// Keychain이 느리거나 막히면 agy는 ~/.gemini/jetski-standalone-oauth-token 파일에 대신 저장합니다.
+// CLI의 파일 저장소는 ~/.gemini/antigravity-cli/antigravity-oauth-token입니다.
 const KEYRING_SERVICE = "gemini";
 const KEYRING_USER = "antigravity";
 const WINDOWS_TARGET = `${KEYRING_SERVICE}:${KEYRING_USER}`;
@@ -113,13 +113,8 @@ function parseCredential(raw) {
   }
 }
 
-function expiryOf(credential) {
-  const expiry = Date.parse(credential?.token?.expiry);
-  return Number.isFinite(expiry) ? expiry : 0;
-}
-
-// 여러 위치에 나뉜 자격 증명을 하나처럼 다룹니다. 읽을 때는 가장 늦게 만료되는 쪽을 쓰고,
-// 쓸 때는 값이 있는 모든 위치를 갱신해 agy가 어느 쪽을 읽어도 같은 계정을 보게 합니다.
+// Keychain을 우선하고, 없거나 접근할 수 없을 때만 CLI 파일을 사용합니다.
+// 저장소마다 계정이 다를 수 있으므로 선택한 위치만 갱신합니다.
 function createLayeredStore(locations) {
   async function load() {
     return Promise.all(locations.map(async (location) => {
@@ -136,13 +131,15 @@ function createLayeredStore(locations) {
     async read() {
       const found = (await load()).filter((entry) => entry.credential);
       if (!found.length) throw new Error("저장된 AGY 자격 증명이 없습니다.");
-      found.sort((a, b) => expiryOf(b.credential) - expiryOf(a.credential));
       return JSON.stringify(found[0].credential);
     },
-    async write(value) {
-      const targets = (await load()).filter((entry) => entry.credential).map((entry) => entry.location);
-      if (targets.length) {
-        await Promise.all(targets.map((location) => location.write(value)));
+    async write(value, { expectedRefreshToken } = {}) {
+      const target = (await load()).find((entry) => entry.credential);
+      if (expectedRefreshToken !== undefined && target?.credential?.token?.refresh_token !== expectedRefreshToken) {
+        throw new Error("AGY 계정이 변경됐습니다. 다시 조회해 주세요.");
+      }
+      if (target) {
+        await target.location.write(value);
         return;
       }
       // 처음 저장할 때는 agy 기본값인 Keychain을 먼저 쓰고, 실패하면 파일로 대체합니다.
@@ -169,16 +166,15 @@ function createAntigravityCredentialStore({
   keychain,
   backend = credentialStore,
 } = {}) {
-  if (platform === "win32") {
+  if (platform !== "darwin") {
     return {
       read: () => backend.readCredential(WINDOWS_TARGET),
       write: (value) => backend.writeCredential(WINDOWS_TARGET, value),
       clear: () => backend.deleteCredential(WINDOWS_TARGET),
     };
   }
-  const file = createTokenFile(path.join(home, ".gemini", "jetski-standalone-oauth-token"));
-  const locations = platform === "darwin" ? [keychain || createMacKeychain(), file] : [file];
-  return createLayeredStore(locations);
+  const file = createTokenFile(path.join(home, ".gemini", "antigravity-cli", "antigravity-oauth-token"));
+  return createLayeredStore([keychain || createMacKeychain(), file]);
 }
 
 module.exports = {

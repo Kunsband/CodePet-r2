@@ -11,7 +11,11 @@ function fixture() {
   const calls = { refresh: 0, writes: 0 };
   const store = {
     read: async () => structuredClone(current),
-    write: async (next) => { calls.writes++; current = structuredClone(next); },
+    write: async (next, options) => {
+      if (next.token.access_token === "fresh") assert.equal(options?.expectedRefreshToken, "refresh");
+      calls.writes++;
+      current = structuredClone(next);
+    },
   };
   const options = {
     store,
