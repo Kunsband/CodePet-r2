@@ -21,6 +21,7 @@ const { GrokDockerRuntime } = require("./grok-docker-runtime");
 const { ClaudeAccountSwitcher } = require("./claude-account-switcher");
 const { normalizeClaudeAccountMetadata } = require("./claude-account-metadata");
 const { AntigravityAccountSwitcher } = require("./antigravity-account-switcher");
+const { createAntigravityCredentialStore } = require("./antigravity-credential");
 const {
   clearUsageCache,
   fetchAntigravityIdentity,
@@ -28,7 +29,6 @@ const {
   fetchAntigravityUsage,
   readGrokUsage,
 } = require("./provider-usage");
-const { deleteCredential, readCredential, writeCredential } = require("./credential-store");
 const { createClaudeLiveStore } = require("./claude-live-credentials");
 const {
   CodexProxy,
@@ -734,10 +734,12 @@ const grokWatcher = new GrokWatcher();
 const claudeLiveStore = createClaudeLiveStore();
 const claudeAccountSwitcher = new ClaudeAccountSwitcher({ liveStore: claudeLiveStore });
 const grokAccountSwitcher = new GrokAccountSwitcher();
+// AGY live 자격 증명은 OS마다 위치가 달라 전용 저장소로 읽습니다.
+const antigravityCredentialStore = createAntigravityCredentialStore();
 const antigravityAccountSwitcher = new AntigravityAccountSwitcher({
-  read: async () => JSON.parse(await readCredential("gemini:antigravity")),
-  write: async (value) => writeCredential("gemini:antigravity", value),
-  clear: async () => deleteCredential("gemini:antigravity"),
+  read: async () => JSON.parse(await antigravityCredentialStore.read()),
+  write: async (value) => antigravityCredentialStore.write(value),
+  clear: async () => antigravityCredentialStore.clear(),
   restart: restartAntigravityApp,
 });
 

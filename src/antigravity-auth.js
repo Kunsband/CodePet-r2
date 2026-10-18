@@ -1,10 +1,11 @@
-const { readCredential, writeCredential } = require("./credential-store");
+const { createAntigravityCredentialStore } = require("./antigravity-credential");
 const { resolveAntigravityClient } = require("./antigravity-oauth-client");
 
 const refreshes = new Map();
+const liveStore = createAntigravityCredentialStore();
 const defaultStore = {
-  read: async () => JSON.parse(await readCredential("gemini:antigravity")),
-  write: (value) => writeCredential("gemini:antigravity", value),
+  read: async () => JSON.parse(await liveStore.read()),
+  write: (value) => liveStore.write(value),
 };
 
 function clientId(credential) {
