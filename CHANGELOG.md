@@ -1,5 +1,17 @@
 # Release notes / 릴리즈 노트
 
+## 1.0.13 — 2026-10-22
+
+### English
+
+- Updated Electron to 44.9.3 for Chromium and certificate security fixes.
+- Build tooling now uses Node.js 22.23.4. Electron still embeds Node.js 24.22.0; this release does not claim to include every October 21 Node.js fix.
+
+### 한국어
+
+- Chromium 및 인증서 보안 수정을 포함한 Electron 44.9.3으로 업데이트했습니다.
+- 빌드 환경에 Node.js 22.23.4를 적용했습니다. Electron 내장 Node.js는 24.22.0이며, 10월 21일 Node.js 보안 수정 전체가 반영된 릴리즈는 아닙니다.
+
 ## 1.0.12 — 2026-10-18
 
 ### English
