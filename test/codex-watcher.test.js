@@ -62,6 +62,40 @@ test("세션별 완료 이벤트에 정확한 thread id를 포함한다", () => 
   ]);
 });
 
+test("CodePet이 소유한 thread는 watcher 이벤트와 작업 상태에서 제외한다", () => {
+  const watcher = new CodexWatcher({
+    getCodexHomes: () => [],
+    shouldIgnoreThread: (threadId) => threadId === THREAD_ID,
+  });
+  const events = [];
+  watcher.on("working-changed", () => events.push("working"));
+  watcher.on("task-finished", () => events.push("finished"));
+
+  watcher.handleLine(
+    ROLLOUT_PATH,
+    JSON.stringify({ type: "event_msg", payload: { type: "task_started" } })
+  );
+  watcher.handleLine(
+    ROLLOUT_PATH,
+    JSON.stringify({ type: "event_msg", payload: { type: "task_complete" } })
+  );
+
+  assert.equal(watcher.working, false);
+  assert.deepEqual(events, []);
+});
+
+test("ignored predicate 오류는 외부 Codex 감시를 계속 허용한다", () => {
+  const watcher = new CodexWatcher({
+    getCodexHomes: () => [],
+    shouldIgnoreThread: () => { throw new Error("lookup failed"); },
+  });
+  watcher.handleLine(
+    ROLLOUT_PATH,
+    JSON.stringify({ type: "event_msg", payload: { type: "task_started" } })
+  );
+  assert.equal(watcher.working, true);
+});
+
 test("shell function call을 실시간 도구 상태로 변환한다", () => {
   const watcher = new CodexWatcher({ getCodexHomes: () => [] });
   const activities = [];

@@ -1,5 +1,21 @@
 # Release notes / 릴리즈 노트
 
+## 1.0.14 — 2026-10-24
+
+### English
+
+- Isolate CodePet's Codex runtime from Codex Desktop to prevent active-writer conflicts while preserving each chat participant's conversation across restarts. Existing sessions are copied into the isolated runtime without modifying the originals.
+- Open the matching CodePet chat from its notifications, with independent activity indicators for participants working concurrently.
+- Show a download icon beside the version in Settings when a newer stable release is available. The icon opens the download for the current platform.
+- Preserve the Electron 44.9.3 security baseline and macOS Antigravity account fixes included in the public release.
+
+### 한국어
+
+- CodePet의 Codex 실행 세션을 Codex Desktop과 분리해 동시 접근 충돌을 방지하고, 앱을 다시 시작해도 대화방·참가자별 대화를 이어갑니다. 기존 세션은 원본을 변경하지 않고 분리된 저장소로 복사합니다.
+- CodePet 채팅 알림을 누르면 해당 채팅방이 열립니다. 여러 참가자가 동시에 작업할 때도 각자의 작업 알림을 유지합니다.
+- 새 정식 버전이 있으면 설정의 버전 정보 옆에 다운로드 아이콘을 표시하고, 현재 운영체제에 맞는 다운로드를 엽니다.
+- 공개 배포판의 Electron 44.9.3 보안 업데이트와 macOS Antigravity 계정 수정을 유지했습니다.
+
 ## 1.0.13 — 2026-10-22
 
 ### English

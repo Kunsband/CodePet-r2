@@ -38,6 +38,11 @@ const {
 const { formatActivityTitle } = require("./activity-title");
 const { ActivityBubbleState, applyActivityPrivacy } = require("./activity-bubble-state");
 const {
+  CHAT_NOTIFICATION_ACTION,
+  buildChatNotificationBubble,
+  chatNotificationActivityKey,
+} = require("./chat-notification");
+const {
   createStableWindowBounds,
   normalizeWindowSize,
   restoreWindowGeometry,
@@ -56,6 +61,7 @@ const {
 } = require("./providers/provider-capabilities");
 const { createChatFeature } = require("./chat/chat-ipc");
 const { buildWindowsCodexLaunchScript } = require("./codex-desktop-launch");
+const { AppUpdateChecker, registerUpdateIpc } = require("./app-updates");
 const { getInstalledFonts } = require("./installed-fonts");
 const {
   isLinuxAutoLaunchEnabled,
@@ -111,6 +117,7 @@ const BUBBLE_ACTIONS = Object.freeze({
   SAVE_CODEX_ACCOUNT: "codex-account:save-current",
   SWITCH_CODEX_ACCOUNT: "codex-account:switch",
   OPEN_CODEX_THREAD: "codex-thread:open",
+  OPEN_CHAT_SESSION: CHAT_NOTIFICATION_ACTION,
 });
 
 const ACTIVITY_BUBBLE_MODES = Object.freeze({
@@ -475,6 +482,7 @@ const BUBBLE_CONFIG = Object.freeze({
 let petWindow = null;
 let settingsWindow = null;
 const grokDockerRuntime = new GrokDockerRuntime();
+let chatActivityState = null;
 // 채팅 기능은 창·세션·IPC·프로세스 실행을 chat/chat-ipc.js가 조립합니다.
 const chatFeature = createChatFeature({
   electron: { ipcMain, dialog, BrowserWindow, shell },
@@ -485,9 +493,11 @@ const chatFeature = createChatFeature({
   openSettings: () => openSettingsWindow(),
   prepareAgent: ({ agent }) => prepareChatAgent(agent),
   onActivity: (state) => {
+    chatActivityState = state || null;
     if (state) pauseAutoMovement("chat", state);
     else resumeAutoMovement("chat");
   },
+  onChatNotification: (notification) => showChatNotificationBubble(notification),
   grokDockerRuntime,
 });
 let movementTimer = null;
@@ -726,7 +736,11 @@ function teardownCodexProxyOnQuit() {
 }
 codexAccountSwitcher.cleanupLegacyCodePetState();
 codexAccountSwitcher.ensureCurrentAccountProfile();
-const codexWatcher = new CodexWatcher();
+const codexWatcher = new CodexWatcher({
+  // CodePet이 소유한 persistent session은 chat 실행기가 직접 알리므로 rollout watcher에서 제외합니다.
+  // 외부 Codex thread는 false가 되어 기존 watcher 알림을 그대로 유지합니다.
+  shouldIgnoreThread: (threadId) => Boolean(chatFeature.findCodexSession(threadId)),
+});
 const antigravityWatcher = new AntigravityWatcher();
 const claudeWatcher = new ClaudeWatcher();
 const grokWatcher = new GrokWatcher();
@@ -1153,7 +1167,7 @@ function playManualReaction(stateName) {
 }
 
 function isAnyProviderWorking() {
-  return codexWatcher.working || antigravityWatcher.working || claudeWatcher.working || grokWatcher.working;
+  return Boolean(chatActivityState) || codexWatcher.working || antigravityWatcher.working || claudeWatcher.working || grokWatcher.working;
 }
 
 // 수동 Pause/Resume 메뉴 항목에서 자동 이동을 토글합니다.
@@ -2497,6 +2511,13 @@ async function openCodexThread(threadId) {
 
   try {
     hideBubble();
+    // 이전 버전의 watcher 말풍선도 persistent CodePet session의 thread를 들고 있을 수 있습니다.
+    // 이 경우 외부 Codex를 열지 않고 저장된 CodePet 방으로 안전하게 되돌립니다.
+    const sessionId = chatFeature.findCodexSession(normalizedThreadId);
+    if (sessionId) {
+      chatFeature.openWindow(sessionId);
+      return;
+    }
     await shell.openExternal(`codex://threads/${normalizedThreadId}`);
   } catch (error) {
     showBubble({
@@ -2672,6 +2693,44 @@ function showCodexActivityBubble(data, context) {
 
 function removeCodexActivityBubble(threadId) {
   activeActivityBubbles.remove(threadId);
+}
+
+// 채팅 실행기는 watcher를 우회하므로, 수명주기 알림을 같은 다중 작업 상태에 합칩니다.
+// cancelled는 typing 종료 신호이므로, 작업 상태만 정리하고 별도 취소 말풍선은 만들지 않습니다.
+function showChatNotificationBubble(notification) {
+  const bubble = buildChatNotificationBubble({ ...notification, text: truncateForBubble(notification?.text) });
+  if (!bubble) return;
+
+  const activityId = chatNotificationActivityKey(notification.sessionId, notification.agentId);
+  if (!activityId) return;
+  if (notification.kind === "cancelled") {
+    activeActivityBubbles.remove(activityId);
+    if (activeActivityBubbles.size === 0 && currentActivityBubbleData?.activitySource === "active") currentActivityBubbleData = null;
+    if (pendingBubbleData?.activitySource === "active") {
+      if (activeActivityBubbles.size > 0) showActiveActivityBubble({ force: true });
+      else hideBubble();
+    }
+    return;
+  }
+
+  if (!bubble.terminal) {
+    const { terminal: _terminal, ...activityData } = bubble;
+    activeActivityBubbles.upsert(activityId, activityData);
+    showActiveActivityBubble();
+    return;
+  }
+
+  activeActivityBubbles.remove(activityId);
+  if (notification.kind === "failed") playReaction("failed");
+  else if (notification.kind === "completed") playReaction("jumping");
+
+  const { terminal: _terminal, ...completionData } = bubble;
+  const completionVisible = showWatcherActivityBubble(completionData);
+  if (completionVisible) {
+    bubbleHideTimer = setTimeout(() => {
+      restoreActiveActivityBubble();
+    }, BUBBLE_CONFIG.doneAutoHideMs);
+  }
 }
 
 function didTaskFail(result) {
@@ -3375,9 +3434,16 @@ function registerIpcHandlers() {
       return;
     }
 
+    if (actionId === BUBBLE_ACTIONS.OPEN_CHAT_SESSION) {
+      const sessionId = typeof payload?.sessionId === "string" ? payload.sessionId : null;
+      if (sessionId && chatFeature.openWindow(sessionId)) hideBubble();
+      return;
+    }
+
     console.warn("[desktop-pet] Unknown bubble action ignored.", actionId);
   });
 
+  registerUpdateIpc({ ipcMain, shell, checker: new AppUpdateChecker({ currentVersion: app.getVersion() }) });
   ipcMain.handle("settings:get", async () => ({
     ok: true,
     data: await getSettingsData(),

@@ -2246,6 +2246,7 @@ window.chatApi.onReset(({ sessionId }) => {
   renderTurnQueue();
 });
 window.chatApi.onRunEvent(handleRunEvent);
+window.chatApi.onOpenSession(({ sessionId }) => selectSession(sessionId));
 window.chatApi.onSessionsChanged((payload) => {
   sessions = payload.sessions || sessions;
   renderSessions();

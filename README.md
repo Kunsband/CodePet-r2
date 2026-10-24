@@ -31,6 +31,7 @@ Install and sign in to the CLIs you want to use: `codex`, `claude`, `agy`, or `g
 **Antigravity: the IDE and `agy` CLI are separate.** Agent chat requires the CLI even if the IDE is installed.
 
 - **Sessions:** Create, rename, and switch conversations; search message contents; export a complete session as Markdown. Deleted sessions remain in trash for 30 days.
+- **Codex continuity:** Chat keeps its own persistent Codex sessions, separate from Codex Desktop, and resumes them across turns and restarts. Existing linked histories are copied on first use; originals remain untouched. Chat notifications open the corresponding CodePet conversation.
 - **History:** Open the latest messages first, up to 50 at a time. New messages appear at the bottom; scroll upward to load older messages while keeping your reading position.
 - **Shared traces:** Agents can look up another participant's commands, tool inputs, results, and errors in the same chat, including work in progress. Records are compressed and read in pages, without size-based truncation or automatic expiry. Available detail depends on the CLI.
 - **Mentions:** Send without a mention, or use `@all` / `@모두`, to deliver the same message to all participants at once. Replies appear as each finishes. Use `@codex`, `@claude`, `@agy`, or `@grok` to choose recipients. Agents can hand off work to multiple participants concurrently; only work for the same participant waits its turn. There is no handoff count limit.

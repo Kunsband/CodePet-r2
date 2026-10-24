@@ -1,7 +1,7 @@
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
-const { ChatStore } = require("./chat-store");
+const { ChatStore, readJsonlTolerant } = require("./chat-store");
 const {
   createCapabilityService,
   toPublicProviders,
@@ -13,6 +13,7 @@ const { selectionError } = require("../providers/provider-model-catalog");
 const { ChatRoom } = require("./chat-room");
 const { ChatActivity } = require("./chat-activity");
 const { CodexChatAccounts, FILE_AUTH_ARGS } = require("./codex-chat-accounts");
+const { CodexChatRuntime } = require("./codex-chat-runtime");
 const { SavedChatAccounts } = require("./saved-chat-accounts");
 const { buildAgentInvocation, PERMISSION_MODES, INLINE_TEXT_LIMIT } = require("./chat-argv");
 const { createLineParser } = require("./chat-events");
@@ -133,6 +134,9 @@ function createChatFeature(options) {
   const { ipcMain, dialog, BrowserWindow, shell } = electron;
 
   let store = null;
+  let codexRuntime = null;
+  const codexRooms = new Map();
+  const indexedRooms = new Set();
   let traceStore = null;
   let storeError = null;
   let capabilityService = null;
@@ -198,6 +202,7 @@ function createChatFeature(options) {
     if (store || storeError) return store;
     try {
       store = new ChatStore({ root: options.storeRoot }).init();
+      codexRuntime = options.codexRuntime || new CodexChatRuntime({ root: path.join(store.root, "runtime", "codex"), platform: options.platform });
       if (!store.readOnly) traceStore = new ChatTraceStore({ root: store.root, hasSession: (id) => store.hasSession(id) });
     } catch (error) {
       storeError = error?.message || String(error);
@@ -273,6 +278,31 @@ function createChatFeature(options) {
   function setActiveSessionId(sessionId) {
     if (!ensureStore() || store.readOnly) return;
     store.patchConfig({ activeSessionId: sessionId });
+  }
+
+  function findCodexSession(threadId) {
+    if (!/^[0-9a-f-]{36}$/i.test(String(threadId || "")) || !ensureStore()) return null;
+    for (const room of store.listSessions()) {
+      if (indexedRooms.has(room.id)) continue;
+      for (const event of readJsonlTolerant(store.transcriptPath(room.id))) {
+        if (event.kind === "cli-session" && event.providerId === "codex") codexRooms.set(event.cliSessionId, room.id);
+      }
+      indexedRooms.add(room.id);
+    }
+    const id = codexRooms.get(threadId);
+    return id && store.hasSession(id) ? id : null;
+  }
+
+  function activeAccountKey(providerId, config) {
+    const switcher = providerId === "codex" ? options.getCodexAccountSwitcher?.() : options.getAccountSwitcher?.(providerId);
+    return config.profileKey || switcher?.listProfiles?.().find(profile => profile.active)?.key
+      || switcher?.currentAccountHint?.() || null;
+  }
+
+  function notifyChat(sessionId, agentId, kind, text) {
+    if (shuttingDown || !store?.hasSession(sessionId)) return;
+    options.onChatNotification?.({ sessionId, agentId, kind, text,
+      agentName: rooms.get(sessionId)?.findAgent(agentId)?.name || agentId });
   }
 
   function pendingFor(sessionId) {
@@ -368,20 +398,23 @@ function createChatFeature(options) {
           const service = config.profileKey ? accountService(providerId) : null;
           const account = service?.prepare(config.profileKey);
           const docker = providerId === "grok" && config.profileKey && permissionMode !== "chat" ? service.runtime(config.profileKey) : grokDockerRuntime;
-          const env = account?.env || process.env;
-          const home = providerId === "codex" ? env.CODEX_HOME || path.join(os.homedir(), ".codex")
+          const env = account?.env || options.env || process.env;
+          const sourceHome = providerId === "codex" ? env.CODEX_HOME || path.join(os.homedir(), ".codex")
             : providerId === "claude" ? env.CLAUDE_CONFIG_DIR || path.join(os.homedir(), ".claude")
               : providerId === "grok" ? (permissionMode === "chat" ? env.GROK_HOME || path.join(os.homedir(), ".grok") : docker.authVolume)
                 : os.homedir();
+          const activeKey = activeAccountKey(providerId, config);
+          const runtime = providerId === "codex" ? codexRuntime.prepare({ sourceHome, identity: activeKey, env }) : null;
+          const home = runtime?.home || sourceHome;
           if (!native) {
-            const switcher = providerId === "codex" ? options.getCodexAccountSwitcher?.() : options.getAccountSwitcher?.(providerId);
-            const activeKey = config.profileKey || switcher?.listProfiles?.().find(profile => profile.active)?.key
-              || switcher?.currentAccountHint?.() || null;
-            native = new NativeSessionLink(store, sessionId, agent.id, {
+            const scope = {
               providerId, profileKey: config.profileKey || null, activeKey, home,
               cwd: invocation.cwd, permissionMode, autoApprove: invocationInput.autoApprove,
               model: agent.model || "default", effort: agent.effort || "default",
-            });
+            };
+            native = new NativeSessionLink(store, sessionId, agent.id, scope, runtime
+              ? { legacyScope: { ...scope, home: sourceHome }, migrate: runtime.migrate } : {});
+            if (providerId === "codex" && native.cliSessionId) codexRooms.set(native.cliSessionId, sessionId);
           }
           let processPrompt = nextPrompt;
           if (continuationPrompt && native.cliSessionId) {
@@ -412,8 +445,8 @@ function createChatFeature(options) {
           const processRun = runAgentProcess({
             commandPath: execution.commandPath,
             needsShell: execution.needsShell,
-            argv: account && providerId === "codex" ? [...execution.argv, ...FILE_AUTH_ARGS] : execution.argv,
-            env: providerId === "claude" ? withRealPwshPath(account?.env || process.env) : account?.env,
+            argv: runtime ? [...execution.argv, ...(account ? FILE_AUTH_ARGS : []), ...runtime.argv] : execution.argv,
+            env: runtime?.env || (providerId === "claude" ? withRealPwshPath(env) : account?.env),
             prompt: processPrompt,
             promptTransport: execution.promptTransport,
             promptFileFlag: execution.promptFileFlag,
@@ -425,6 +458,7 @@ function createChatFeature(options) {
               nativeSessions.add(cliSessionId);
               try { native.observe(cliSessionId); }
               catch (error) { linkError = error; }
+              if (providerId === "codex") codexRooms.set(cliSessionId, sessionId);
               store.appendEvent(sessionId, {
                 kind: "cli-session", providerId, agentId: agent.id, runId, cliSessionId,
                 profileKey: config.profileKey || null,
@@ -443,9 +477,10 @@ function createChatFeature(options) {
             if (linkError) return { ...result, ok: false, error: linkError.message };
             if (result.ok && !result.cancelled && !cancelled) native.delivered(throughId);
             return result;
-          }).finally(() => account?.finish?.(
-            providerId === "grok" && permissionMode !== "chat" ? docker : null
-          )) };
+          }).finally(async () => {
+            runtime?.finish();
+            await account?.finish?.(providerId === "grok" && permissionMode !== "chat" ? docker : null);
+          }) };
         },
       });
       return {
@@ -505,9 +540,13 @@ function createChatFeature(options) {
         const latestMeta = store?.readMeta(sessionId);
         const providerId = payload?.agent?.providerId || payload?.agent?.id;
         const participant = latestMeta?.agents?.[payload?.agent?.id];
-        if (providerId === "codex" && participant?.profileKey && !participant.autoApprove) {
-          await accountService("codex")?.prepareSandbox?.(participant.profileKey,
-            participantRecord(latestMeta, payload.agent.id), latestMeta.workspace || store.runtimeChatDir());
+        if (providerId === "codex" && !(latestMeta.permissionMode === "workspace-write" && (participant?.autoApprove || payload.autoApprove))) {
+          const account = participant?.profileKey ? accountService("codex")?.prepare(participant.profileKey) : null;
+          const env = account?.env || options.env || process.env;
+          const sourceHome = env.CODEX_HOME || path.join(os.homedir(), ".codex");
+          await codexRuntime.prepareSandbox({ sourceHome, identity: activeAccountKey(providerId, participant || {}),
+            sandboxSource: options.getCodexAccountSwitcher?.()?.codexHome || sourceHome,
+            record: participantRecord(latestMeta, payload.agent.id), cwd: latestMeta.workspace || store.runtimeChatDir() });
         }
         if ((payload?.agent?.providerId || payload?.agent?.id) === "grok" && ["workspace-read", "workspace-write"].includes(latestMeta?.permissionMode)) {
           const config = latestMeta.agents?.[payload.agent.id];
@@ -527,19 +566,25 @@ function createChatFeature(options) {
         : message;
       broadcast("chat:message", { sessionId, message: outbound });
       broadcast("chat:sessions-changed", sessionsPayload());
+      if (message.authorType === "agent") notifyChat(sessionId, message.author, message.error ? "failed" : "completed", message.text);
     });
     room.on("typing", (payload) => {
       activity.typing(sessionId, payload);
+      notifyChat(sessionId, payload.agentId, payload.busy ? "working" : "cancelled");
       broadcast("chat:typing", { sessionId, ...payload });
     });
     room.on("turn-state", (payload) => broadcast("chat:turn-state", { sessionId, ...payload }));
     room.on("reset", () => broadcast("chat:reset", { sessionId }));
     room.on("run-event", (payload) => {
       activity.event(sessionId, payload);
+      if (payload.kind === "status") notifyChat(sessionId, payload.agentId, "progress", payload.label);
       broadcast("chat:run-event", { sessionId, ...payload });
     });
     room.on("agents", (agents) => broadcast("chat:agents", { sessionId, agents }));
-    room.on("approval-request", (payload) => broadcast("chat:approval-request", { sessionId, ...payload }));
+    room.on("approval-request", (payload) => {
+      notifyChat(sessionId, payload.agentId, "waiting", "작업 승인을 기다리고 있습니다.");
+      broadcast("chat:approval-request", { sessionId, ...payload });
+    });
     room.on("busy", (busy) => {
       if (shuttingDown) return;
       store.setSessionStatus(sessionId, busy ? "running" : "idle");
@@ -1126,15 +1171,22 @@ function createChatFeature(options) {
     };
   }
 
-  function openWindow() {
+  function openWindow(sessionId = null) {
+    if (sessionId !== null) {
+      if (!ensureStore()?.hasSession(sessionId)) return null;
+      setActiveSessionId(sessionId);
+    }
     if (chatWindow && !chatWindow.isDestroyed()) {
+      if (chatWindow.isMinimized?.()) chatWindow.restore();
       chatWindow.show();
       chatWindow.focus();
+      if (sessionId) chatWindow.webContents.send("chat:open-session", { sessionId });
       return chatWindow;
     }
     chatWindow = createChatWindow({
       BrowserWindow,
       onReady: () => {
+        if (sessionId) chatWindow.webContents.send("chat:open-session", { sessionId: getActiveSessionId() });
         if (typeof onWindowReady === "function") onWindowReady(chatWindow);
       },
       onClosed: () => {
@@ -1166,7 +1218,7 @@ function createChatFeature(options) {
     }
   }
 
-  return { registerIpcHandlers, openWindow, getWindow, shutdown };
+  return { registerIpcHandlers, openWindow, getWindow, findCodexSession, shutdown };
 }
 
 module.exports = {

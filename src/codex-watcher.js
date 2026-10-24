@@ -501,6 +501,10 @@ class CodexWatcher extends EventEmitter {
       typeof options.getCodexHomes === "function"
         ? options.getCodexHomes
         : discoverDefaultCodexHomes;
+    // CodePet이 직접 실행·소유하는 Codex session은 chat 기능이 별도로 알립니다.
+    // 여기서 제외하지 않으면 같은 rollout을 watcher도 읽어 이중 알림과 외부 Codex 열기가 생깁니다.
+    this.shouldIgnoreThread =
+      typeof options.shouldIgnoreThread === "function" ? options.shouldIgnoreThread : () => false;
     this.pollTimer = null;
     // filePath -> { offset, buffer } : 파일별 읽기 위치입니다.
     // 동시 세션이 번갈아 기록해도 각 파일을 이어서 읽을 수 있습니다.
@@ -514,6 +518,18 @@ class CodexWatcher extends EventEmitter {
     this.taskStartedAtByFile = new Map();
     this.firstPoll = true;
     this.cachedUsage = null;
+  }
+
+  shouldIgnoreFile(filePath) {
+    const threadId = extractThreadIdFromRolloutPath(filePath);
+    if (!threadId) return false;
+    try {
+      return this.shouldIgnoreThread(threadId) === true;
+    } catch (error) {
+      // 알림 필터의 오류가 외부 Codex 감시를 멈추게 해서는 안 됩니다.
+      console.warn("[desktop-pet] Codex thread ignore predicate failed.", error.message);
+      return false;
+    }
   }
 
   get working() {
@@ -602,6 +618,11 @@ class CodexWatcher extends EventEmitter {
     // 없는 세션도 first-seen fallback에서 시작 순서에 가깝게 고정됩니다.
     const filesToPoll = this.firstPoll ? [...recentFiles].reverse() : recentFiles;
     for (const file of filesToPoll) {
+      if (this.shouldIgnoreFile(file.filePath)) {
+        this.tails.delete(file.filePath);
+        this.clearWorking(file.filePath, { reason: "ignored", message: null });
+        continue;
+      }
       let tail = this.tails.get(file.filePath);
 
       if (!tail) {
@@ -774,6 +795,7 @@ class CodexWatcher extends EventEmitter {
 
   handleLine(filePath, line) {
     if (!line.trim()) return;
+    if (this.shouldIgnoreFile(filePath)) return;
 
     let entry;
     try {

@@ -687,6 +687,7 @@ async function initialize() {
   registerAppearanceControls();
   registerProviderControls();
   registerAppearanceUpdates();
+  registerUpdateControls();
 
   void loadFonts();
   try {
@@ -702,6 +703,38 @@ async function initialize() {
   } catch (error) {
     showError(error.message || String(error));
   }
+}
+
+function registerUpdateControls() {
+  const button = $("#download-update");
+  const version = $("#app-version");
+  let checking = false;
+  async function refresh() {
+    if (checking) return;
+    checking = true;
+    try {
+      const result = await api.checkUpdate();
+      if (result?.currentVersion) version.textContent = `VERSION ${result.currentVersion}`;
+      button.hidden = result?.status !== "available";
+      if (!button.hidden) {
+        const label = `새 버전 ${result.latestVersion} 다운로드`;
+        button.title = label;
+        button.setAttribute("aria-label", label);
+      }
+    } catch {
+      button.hidden = true;
+    } finally { checking = false; }
+  }
+  button.addEventListener("click", async () => {
+    button.disabled = true;
+    try {
+      const result = await api.downloadUpdate();
+      if (!result?.ok) showError(responseError(result, "다운로드 링크를 열지 못했습니다."));
+    } catch { showError("다운로드 링크를 열지 못했습니다."); }
+    finally { button.disabled = false; }
+  });
+  window.addEventListener("focus", refresh);
+  void refresh();
 }
 
 initialize();

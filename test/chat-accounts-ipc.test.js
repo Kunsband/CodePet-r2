@@ -5,6 +5,7 @@ const path = require("node:path");
 const os = require("node:os");
 const runner = require("../src/chat/chat-agent-runner");
 const capabilities = require("../src/providers/provider-capabilities");
+const { CodexChatRuntime } = require("../src/chat/codex-chat-runtime");
 
 test("saved account participants keep their models, mentions, traces and CLI identities separate", async (t) => {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), "codepet-account-ipc-"));
@@ -13,14 +14,14 @@ test("saved account participants keep their models, mentions, traces and CLI ide
     modelOptions: [{ id: "base-model" }], permissions: { chat: { supported: true } } };
   t.mock.method(capabilities, "createCapabilityService", () => ({ defs: [base], getRecord: (id) => id === "codex" ? base : null, discover: async () => [base] }));
   const profiles = ["a", "b"].map((key) => ({ key, label: `Account ${key}` }));
-  const sandboxReady = new Set();
   const record = (key) => ({ ...base, modelOptions: [{ id: `model-${key}`, efforts: ["high"] }], models: [`model-${key}`] });
   const accountService = { list: () => profiles, discover: async (key) => record(key), record,
-    prepareSandbox: async key => { await new Promise(resolve => setTimeout(resolve, 5)); sandboxReady.add(`private-${key}`); },
     prepare: (key) => ({ env: { ...process.env, CODEX_HOME: path.join(root, `private-${key}`) } }) };
   const calls = [];
+  const runtime = new CodexChatRuntime({ root: path.join(root, "runtime", "codex"), platform: "linux" });
+  const privateHome = key => runtime.homeFor(path.join(root, `private-${key}`), key);
   t.mock.method(runner, "runAgentProcess", (input) => {
-    assert.ok(sandboxReady.delete(path.basename(input.env.CODEX_HOME)), "sandbox preparation must finish before each participant runs");
+    assert.ok(input.env.CODEX_HOME.startsWith(path.join(root, "runtime", "codex")), "chat sessions must use a private home");
     calls.push(input);
     input.parseLine(JSON.stringify({ type: "item.completed", item: { type: "command_execution", command: "fixture", aggregated_output: "account-trace", exit_code: 0 } }));
     return { promise: Promise.resolve({ ok: true, text: "finished" }), cancel() {} };
@@ -30,7 +31,7 @@ test("saved account participants keep their models, mentions, traces and CLI ide
   const { createChatFeature } = require(modulePath);
   t.after(() => { delete require.cache[modulePath]; });
   const handlers = new Map();
-  const options = { storeRoot: root, codexAccounts: accountService, electron: {
+  const options = { storeRoot: root, platform: "linux", codexAccounts: accountService, electron: {
     ipcMain: { handle: (name, handler) => handlers.set(name, handler), on() {} }, dialog: {}, BrowserWindow: class {}, shell: {},
   } };
   let feature = createChatFeature(options);
@@ -67,7 +68,7 @@ test("saved account participants keep their models, mentions, traces and CLI ide
   }
   await completed(1);
   assert.equal(calls.length, 1);
-  assert.equal(calls[0].env.CODEX_HOME, path.join(root, "private-a"));
+  assert.equal(calls[0].env.CODEX_HOME, privateHome("a"));
   assert.equal(calls[0].provider, "codex");
   assert.ok(calls[0].outputFile);
   assert.ok(calls[0].argv.includes("model-a"));
@@ -75,7 +76,7 @@ test("saved account participants keep their models, mentions, traces and CLI ide
   assert.match(calls[0].prompt, /참가자 "@리뷰"\(검토 담당\)/);
   await invoke("chat:send", { sessionId, text: "@모두 확인해" });
   const state = await completed(3);
-  assert.deepEqual(calls.slice(1).map((call) => path.basename(call.env.CODEX_HOME)).sort(), ["private-a", "private-b"]);
+  assert.deepEqual(calls.slice(1).map((call) => call.env.CODEX_HOME).sort(), [privateHome("a"), privateHome("b")].sort());
   assert.ok(calls.every((call) => call.commandPath === "same-cli"));
   assert.doesNotMatch(JSON.stringify(state), /private-a|private-b|auth\.json/);
   const { ChatTraceStore } = require("../src/chat/chat-traces");
@@ -94,7 +95,7 @@ test("saved account participants keep their models, mentions, traces and CLI ide
   assert.equal(reopened.session.messages.find((message) => message.author === "codex-2").agentMeta.mention, "리뷰");
   await invoke("chat:send", { sessionId, text: "@codex-2 기존 호출도 확인해" });
   await completed(4);
-  assert.equal(calls.at(-1).env.CODEX_HOME, path.join(root, "private-a"));
+  assert.equal(calls.at(-1).env.CODEX_HOME, privateHome("a"));
   assert.equal((await rename("codex-2", { name: "", mention: "" })).ok, true);
   const reset = await invoke("chat:state");
   assert.equal(reset.session.agents.find((agent) => agent.id === "codex-2").name, "Codex 2");

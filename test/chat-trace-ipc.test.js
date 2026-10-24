@@ -34,7 +34,7 @@ test("chat IPC persists traces before the next participant, preserves CLI permis
   const { createChatFeature } = require(modulePath);
   t.after(() => { delete require.cache[modulePath]; });
   const handlers = new Map();
-  const feature = createChatFeature({ storeRoot: root, electron: {
+  const feature = createChatFeature({ storeRoot: root, platform: "linux", env: { CODEX_HOME: path.join(root, "source-codex") }, electron: {
     ipcMain: { handle: (name, handler) => handlers.set(name, handler), on() {} },
     dialog: {}, BrowserWindow: class {}, shell: {},
   } });

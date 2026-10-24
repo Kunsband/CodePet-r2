@@ -6,6 +6,8 @@ const CHANNELS = Object.freeze({
   FONTS: "settings:fonts",
   ACCOUNT: "settings:account",
   USAGE: "settings:usage",
+  CHECK_UPDATE: "settings:check-update",
+  DOWNLOAD_UPDATE: "settings:download-update",
   APPEARANCE: "appearance:update",
   NAVIGATE: "settings:navigate",
 });
@@ -16,6 +18,8 @@ contextBridge.exposeInMainWorld("settingsApi", {
   fonts: () => ipcRenderer.invoke(CHANNELS.FONTS),
   account: (value) => ipcRenderer.invoke(CHANNELS.ACCOUNT, value),
   usage: () => ipcRenderer.invoke(CHANNELS.USAGE),
+  checkUpdate: () => ipcRenderer.invoke(CHANNELS.CHECK_UPDATE),
+  downloadUpdate: () => ipcRenderer.invoke(CHANNELS.DOWNLOAD_UPDATE),
   onAppearance: (handler) => {
     if (typeof handler !== "function") return () => {};
     const listener = (_event, value) => handler(value);

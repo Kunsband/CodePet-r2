@@ -34,7 +34,7 @@ test("chat opens and switches during CLI discovery, then updates providers witho
   t.after(() => { delete require.cache[modulePath]; });
   const { createChatFeature } = require(modulePath);
   const handlers = new Map();
-  const feature = createChatFeature({ storeRoot: root, onActivity: state => pet.push(state), electron: { ipcMain: { handle: (name, handler) => handlers.set(name, handler), on() {} }, dialog: {}, BrowserWindow: Window, shell: {} } });
+  const feature = createChatFeature({ storeRoot: root, platform: "linux", env: { CODEX_HOME: path.join(root, "source-codex") }, onActivity: state => pet.push(state), electron: { ipcMain: { handle: (name, handler) => handlers.set(name, handler), on() {} }, dialog: {}, BrowserWindow: Window, shell: {} } });
   t.after(() => feature.shutdown());
   feature.registerIpcHandlers(); feature.openWindow();
   const invoke = (name, input) => handlers.get(name)({}, input);

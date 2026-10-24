@@ -100,7 +100,7 @@ async function setup(t, providerId, behavior) {
   t.after(() => { delete require.cache[modulePath]; });
   const { createChatFeature } = require(modulePath);
   const handlers = new Map();
-  const options = { storeRoot: store.root, electron: { ipcMain: { handle: (name, handler) => handlers.set(name, handler), on() {} }, dialog: {}, BrowserWindow: class {}, shell: {} } };
+  const options = { storeRoot: store.root, platform: "linux", env: { CODEX_HOME: path.join(store.root, "source-codex") }, electron: { ipcMain: { handle: (name, handler) => handlers.set(name, handler), on() {} }, dialog: {}, BrowserWindow: class {}, shell: {} } };
   let feature;
   const restart = () => { feature?.shutdown(); feature = createChatFeature(options); feature.registerIpcHandlers(); };
   restart();
@@ -131,6 +131,11 @@ for (const providerId of ["codex", "claude", "agy", "grok"]) test(`${providerId}
   assert.match(calls[1].prompt, /second-only-question/);
   const links = () => JSON.parse(fs.readFileSync(path.join(store.sessionDir(sessionId), "native-sessions.json"), "utf8"));
   const id = links()[providerId].cliSessionId;
+  if (providerId === "codex") {
+    assert.ok(calls[0].env.CODEX_HOME.startsWith(path.join(store.root, "runtime", "codex")));
+    assert.ok(calls[0].argv.includes(`sqlite_home=${JSON.stringify(calls[0].env.CODEX_HOME)}`));
+    assert.ok(!calls[0].argv.includes("--ephemeral"));
+  }
   for (let i = 0; i < 65; i++) store.appendEvent(sessionId, { kind: "message", message: { id: `external-${i}`, text: `missed-${i}`, authorType: "user", author: "user" } });
   assert.ok(!(await send("third-only-question")).error);
   assert.match(calls[2].prompt, /missed-0\n/);
@@ -141,6 +146,7 @@ for (const providerId of ["codex", "claude", "agy", "grok"]) test(`${providerId}
   assert.ok(!(await send("fourth-only-question")).error);
   assert.equal(links()[providerId].cliSessionId, id);
   assert.ok(calls.slice(1).every(call => call.argv.includes(id)));
+  if (providerId === "codex") assert.ok(calls.every(call => call.env.CODEX_HOME === calls[0].env.CODEX_HOME));
   assert.doesNotMatch(calls[3].prompt, /first-only-secret|second-only-question|third-only-question|missed-0/);
 });
 
