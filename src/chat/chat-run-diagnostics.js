@@ -17,6 +17,12 @@ function redactSensitiveText(text) {
     // Cookie·Set-Cookie 헤더는 "a=1; b=2"처럼 공백이 섞이므로 값 전체를 줄 끝까지 제거한다.
     // 이름=값 형태가 이어질 때만 헤더로 보고, 코드의 "cookie: string" 같은 표기는 남긴다.
     .replace(/(\b(?:set-)?cookie\s*:\s*)(?=[^\s;,=]+=)[^\r\n]*/gi, "$1[REDACTED]")
+    // curl 쿠키 옵션 값을 제거한다. --cookie는 curl 전용 표기라 어디서나 보고,
+    // -b는 다른 도구의 옵션과 겹치므로 같은 줄의 curl 뒤에서만 본다. -sSb처럼 붙여 쓴
+    // 짧은 옵션도 b가 마지막이면 쿠키 값을 받는다.
+    .replace(/(--cookie(?:\s+|=))(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s"']+)/gi, "$1[REDACTED]")
+    .replace(/\bcurl\b[^\r\n]*/gi, (command) =>
+      command.replace(/(\s-[A-Za-z]*b\s+)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s"']+)/g, "$1[REDACTED]"))
     // 알려진 API 키 및 토큰 접두사로 시작하는 값을 제거한다.
     .replace(
       /\b(?:sk-ant-|sk-|ghp_|gho_|xoxb-|xoxp-|AKIA)[A-Za-z0-9._-]+/gi,

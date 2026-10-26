@@ -77,10 +77,31 @@ test("Cookie·Set-Cookie 헤더는 공백이 섞인 값 전체를 가리고 코�
   assert.equal(redactSensitiveText(code), code);
 });
 
+test("curl 쿠키 옵션 값은 가리고 다른 도구의 -b 옵션과 쿠키 파일 경로는 남긴다", () => {
+  const commands = [
+    'curl -b "session=synthetic-a; other=synthetic-b" https://example.com/api',
+    "curl --cookie 'sid=synthetic-c' https://example.com",
+    "curl -sSLb sid=synthetic-d https://example.com",
+    'curl.exe -b "a=synthetic-e" https://example.com',
+  ];
+  const result = redactSensitiveText(commands.join("\n"));
+
+  assert.doesNotMatch(result, /synthetic/);
+  assert.deepEqual(result.split("\n"), [
+    "curl -b [REDACTED] https://example.com/api",
+    "curl --cookie [REDACTED] https://example.com",
+    "curl -sSLb [REDACTED] https://example.com",
+    "curl.exe -b [REDACTED] https://example.com",
+  ]);
+
+  const unrelated = "git checkout -b feature-branch\npython bench.py -b 1\ncurl --cookie-jar jar.txt https://example.com";
+  assert.equal(redactSensitiveText(unrelated), unrelated);
+});
+
 test("토큰 접두사로 시작하는 수백만 자 출력도 예외 없이 처리한다", () => {
   // base64url로 인코딩한 큰 JSON 등은 eyJ로 시작하는 긴 단어가 됩니다.
   const tail = "a".repeat(10_000_000);
-  for (const prefix of ["eyJ", "xai-", "ya29.", "GOCSPX-", "github_pat_"]) {
+  for (const prefix of ["eyJ", "xai-", "ya29.", "GOCSPX-", "github_pat_", "Cookie: a=", "curl -b ", "--cookie "]) {
     assert.doesNotThrow(() => redactSensitiveText(prefix + tail), prefix);
   }
 });
