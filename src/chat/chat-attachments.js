@@ -116,13 +116,6 @@ function persistAttachmentContent({
       error: `파일이 너무 큽니다. (최대 ${Math.floor(maxFileBytes / 1024 / 1024)}MiB)`,
     };
   }
-  if (currentSessionBytes + size > maxSessionBytes) {
-    return {
-      ok: false,
-      error: `세션 첨부 용량 한도를 초과합니다. (최대 ${Math.floor(maxSessionBytes / 1024 / 1024)}MiB)`,
-    };
-  }
-
   const extension = path.extname(String(name || "")).toLowerCase();
   if (DANGEROUS_EXTENSIONS.has(extension) || isExecutableMagic(content)) {
     return { ok: false, error: "실행 파일 형식은 첨부할 수 없습니다." };
@@ -137,14 +130,23 @@ function persistAttachmentContent({
   const id = hash.slice(0, 16);
   const fileName = `${id}.${safeCopyExtension(extension, kind, mime)}`;
   const targetPath = path.join(attachmentsDir, fileName);
+  let addedBytes = 0;
 
   try {
     fsApi.mkdirSync(attachmentsDir, { recursive: true });
     if (!fsApi.existsSync(targetPath)) {
+      // 이미 저장된 첨부를 재사용할 때는 세션 용량을 추가로 쓰지 않습니다.
+      if (currentSessionBytes + size > maxSessionBytes) {
+        return {
+          ok: false,
+          error: `세션 첨부 용량 한도를 초과합니다. (최대 ${Math.floor(maxSessionBytes / 1024 / 1024)}MiB)`,
+        };
+      }
       // 임시 파일에 쓴 뒤 rename: 복사 도중 종료돼도 깨진 첨부가 남지 않습니다.
       const tmpPath = `${targetPath}.${process.pid}.tmp`;
       fsApi.writeFileSync(tmpPath, content);
       fsApi.renameSync(tmpPath, targetPath);
+      addedBytes = size;
     }
   } catch {
     return { ok: false, error: "첨부 파일을 저장하지 못했습니다." };
@@ -152,6 +154,7 @@ function persistAttachmentContent({
 
   return {
     ok: true,
+    addedBytes,
     attachment: {
       id,
       name: sanitizeDisplayName(name),
@@ -201,13 +204,6 @@ function importAttachment({
       error: `파일이 너무 큽니다. (최대 ${Math.floor(maxFileBytes / 1024 / 1024)}MiB)`,
     };
   }
-  if (currentSessionBytes + stat.size > maxSessionBytes) {
-    return {
-      ok: false,
-      error: `세션 첨부 용량 한도를 초과합니다. (최대 ${Math.floor(maxSessionBytes / 1024 / 1024)}MiB)`,
-    };
-  }
-
   const extension = path.extname(sourcePath).toLowerCase();
   if (DANGEROUS_EXTENSIONS.has(extension)) {
     return { ok: false, error: "실행 파일 형식은 첨부할 수 없습니다." };
@@ -275,3 +271,4 @@ module.exports = {
   sniffImageMime,
   detectMime,
 };
+
