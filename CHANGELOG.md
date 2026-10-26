@@ -1,5 +1,21 @@
 # Release notes / 릴리즈 노트
 
+## 1.1.1 — 2026-10-26
+
+### English
+
+- Preserve read-only chat sessions and their messages, attachments, and execution history when deletion is requested.
+- Match agent mention routing to the Markdown renderer's code-fence boundaries, including inline backticks and LF/CRLF input.
+- Harden credential redaction in execution traces, including escaped JSON, cookie values, and additional token formats.
+- Avoid counting reused attachment files more than once against the storage quota.
+
+### 한국어
+
+- 읽기 전용 채팅 세션의 삭제를 차단해 메시지·첨부·실행 기록을 보존합니다.
+- 코드 펜스와 인라인 백틱, LF/CRLF 입력에서 멘션 호출을 Markdown 렌더러의 표시와 일치시킵니다.
+- 실행 기록의 이스케이프된 JSON·쿠키 값·추가 토큰 형식에 대한 자격 증명 가림을 강화합니다.
+- 재사용한 첨부 파일을 저장 용량 한도에서 중복 계산하지 않습니다.
+
 ## 1.0.14 — 2026-10-24
 
 ### English
