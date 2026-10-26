@@ -1,5 +1,19 @@
 # Release notes / 릴리즈 노트
 
+## 1.1.2 — 2026-10-26
+
+### English
+
+- Keep cookie and JWT redaction linear on repeated long input while covering long cookie names, values beginning with `=`, and JWTs after hyphens.
+- Restore curl cookie-option masking and correctly handle brackets inside quoted cookie-array values, including escaped JSON.
+- Reduce false positives in code and add regression, persisted-trace, and performance tests for credential masking.
+
+### 한국어
+
+- 반복되는 긴 입력에서도 쿠키·JWT 가림을 선형으로 처리하며, 긴 쿠키 이름·`=`로 시작하는 값·하이픈 뒤 JWT의 가림 범위를 유지합니다.
+- curl 쿠키 옵션의 가림을 복원하고, 이스케이프된 JSON을 포함해 쿠키 배열의 문자열 안에 있는 대괄호를 올바르게 처리합니다.
+- 코드의 오탐을 줄이고 자격 증명 가림의 회귀·저장된 작업 기록·성능 테스트를 추가했습니다.
+
 ## 1.1.1 — 2026-10-26
 
 ### English
