@@ -155,6 +155,25 @@ test("더 새로운 스키마의 세션 메타는 세션 단위로 읽기 전용
   assert.equal(store.appendEvent(meta.id, { kind: "message", message: { text: "x" } }), null);
 });
 
+test("읽기 전용 세션 삭제는 메타·메시지·첨부와 목록을 보존한다", (t) => {
+  const store = makeStore();
+  t.after(() => fs.rmSync(store.root, { recursive: true, force: true }));
+  const meta = store.createSession({ title: "future-session" });
+  store.appendEvent(meta.id, { kind: "message", message: { id: "m1", text: "보존할 메시지" } });
+  const attachment = path.join(store.attachmentsDir(meta.id), "note.txt");
+  fs.writeFileSync(attachment, "보존할 첨부");
+  const raw = JSON.stringify({ ...store.readMeta(meta.id), schemaVersion: STORE_SCHEMA_VERSION + 1, future: { keep: true } });
+  fs.writeFileSync(store.metaPath(meta.id), raw);
+  const index = fs.readFileSync(store.indexPath(), "utf8");
+
+  assert.equal(store.deleteSession(meta.id), false);
+  assert.equal(fs.readFileSync(store.metaPath(meta.id), "utf8"), raw);
+  assert.equal(fs.readFileSync(store.indexPath(), "utf8"), index);
+  assert.equal(store.readMessages(meta.id)[0].text, "보존할 메시지");
+  assert.equal(fs.readFileSync(attachment, "utf8"), "보존할 첨부");
+  assert.deepEqual(store.listTrash(), []);
+});
+
 test("소프트 삭제는 trash로 이동하고 복원할 수 있다", () => {
   const store = makeStore();
   const meta = store.createSession({ title: "삭제 대상" });

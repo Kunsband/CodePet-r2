@@ -404,7 +404,7 @@ class ChatStore {
   }
 
   deleteSession(id) {
-    if (this.readOnly) return false;
+    if (this.readOnly || this.readMeta(id)?.readOnly) return false;
     const source = this.sessionDir(id);
     if (!fs.existsSync(source)) {
       this.index.sessions = this.index.sessions.filter((entry) => entry.id !== id);
