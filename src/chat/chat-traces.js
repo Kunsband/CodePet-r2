@@ -20,7 +20,9 @@ function validTraceAgent(id) {
 }
 
 function redactNamedValues(text) {
-  const keys = /(api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|password|secret|authorization|(?:set-)?cookie)(\\*["'])?\s*[:=]\s*/gi;
+  // id_token/session_token must not be glued to a preceding letter or digit, so
+  // InvalidToken or isValidToken in code is not mistaken for a credential key.
+  const keys = /(api[_-]?key|access[_-]?token|refresh[_-]?token|(?<![A-Za-z0-9])(?:id|session)[_-]?token|password|secret|authorization|(?:set-)?cookie)(\\*["'])?\s*[:=]\s*/gi;
   const parts = [];
   let copied = 0;
   let match;

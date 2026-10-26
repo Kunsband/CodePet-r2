@@ -284,6 +284,13 @@ test("unclosed cookie arrays repeated over many lines are redacted in linear tim
   assert.ok(Date.now() - started < 4000, `${Date.now() - started}ms`);
 });
 
+test("id_token and session_token keys are not matched inside other identifiers", () => {
+  const code = "except InvalidToken:\n    pass\nconst state = { isValidToken: true };";
+  assert.equal(safeText(code), code);
+  assert.equal(safeText('{"id_token": "synthetic-a", "sessionToken": "synthetic-b"}'), '{"id_token": [REDACTED], "sessionToken": [REDACTED]}');
+  assert.equal(safeText("google_id_token=synthetic-c"), "google_id_token=[REDACTED]");
+});
+
 test("all provider parsers preserve complete tool inputs and outputs without changing UI events", () => {
   const fixtures = [
     ["codex", { type: "item.started", item: { id: "c1", type: "command_execution", command: "npm test" } }, "npm test"],
