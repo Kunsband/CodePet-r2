@@ -241,6 +241,7 @@ test("cookie headers are redacted in verbose command output and structured tool 
   const parse = createLineParser("claude", event => collector.add(event));
   parse(JSON.stringify({ type: "assistant", message: { content: [
     { type: "tool_use", name: "WebFetch", input: { url: "https://example.com", headers: { Cookie: "a=synthetic-a; b=synthetic-b" } } },
+    { type: "tool_use", name: "Bash", input: { command: 'curl -b "sid=synthetic-f; csrf=synthetic-g" https://example.com/api' } },
   ] } }));
   parse(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", content: [
     { type: "text", text: "> Cookie: session=synthetic-c; other=synthetic-d\n< set-cookie: sid=synthetic-e; Path=/\nHTTP 200" },
@@ -259,6 +260,15 @@ test("set-cookie arrays printed as JSON or inspected objects are redacted as a w
   const output = [
     '{"set-cookie":["a=synthetic-h","b=synthetic-i"]}',
     "{ 'set-cookie': [ 'sid=synthetic-j; Path=/' ] }",
+    '{"set-cookie":["a=hello]synthetic-m","b=synthetic-n"],"keep":"kept-o"}',
+    '{"cookie":["a=\\"x]\\"synthetic-p","b=synthetic-q"]}',
+    '{"set-cookie":[["a","synthetic-r"],["synthetic-s"]]}',
+    JSON.stringify(JSON.stringify({ "set-cookie": ["a=x]synthetic-t", "b=synthetic-u"], keep: "kept-v" })),
+    // util.inspect quotes a value with both ' and " in backticks.
+    "{ 'set-cookie': [ `a=]synthetic-w\"'` ], keep: 'kept-x' }",
+    // The key's quote depth can differ from the values', or the key can be unquoted.
+    JSON.stringify("{'set-cookie': [\"a=]it's synthetic-y\"], keep: 'kept-z'}"),
+    JSON.stringify('password: ["a]synthetic-aa"], keep: kept-ab'),
     "status 200",
   ].join("\n");
   parse(JSON.stringify({ type: "item.completed", item: {
@@ -269,6 +279,11 @@ test("set-cookie arrays printed as JSON or inspected objects are redacted as a w
   const raw = JSON.stringify(await readAll(store, id));
   assert.doesNotMatch(raw, /synthetic-/);
   assert.match(raw, /status 200/);
+  assert.match(raw, /kept-o/);
+  assert.match(raw, /kept-v/);
+  assert.match(raw, /kept-x/);
+  assert.match(raw, /kept-z/);
+  assert.match(raw, /kept-ab/);
 });
 
 test("unclosed cookie arrays repeated over many lines are redacted in linear time", async t => {

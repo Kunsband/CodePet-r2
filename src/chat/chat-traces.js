@@ -52,11 +52,32 @@ function redactNamedValues(text) {
         slashes = char === "\\" ? slashes + 1 : 0;
       }
     } else if (text[start] === "[") {
-      // set-cookie values are often printed as arrays: mask through the closing
-      // bracket on the same line, or to EOL when the array continues below.
-      end = start + 1;
-      while (end < text.length && text[end] !== "]" && text[end] !== "\r" && text[end] !== "\n") end++;
-      if (text[end] === "]") end++;
+      // set-cookie values are often printed as arrays. Track string delimiters so "]"
+      // inside a quoted value does not end the array, and count nested brackets.
+      // The first quote in the array sets the escape depth, because the key may be
+      // unquoted or quoted at another depth ({'set-cookie': [\"…\"]}). util.inspect
+      // uses backticks when a value has both ' and ". Mask to EOL when the array
+      // continues below.
+      let encodedSlashes = -1;
+      let slashPeriod = 0;
+      let slashes = 0;
+      let inString = null;
+      let nesting = 0;
+      end = start;
+      while (end < text.length && text[end] !== "\r" && text[end] !== "\n") {
+        const char = text[end++];
+        if ((char === '"' || char === "'" || char === "`")
+          && (encodedSlashes < 0 || slashes % slashPeriod === encodedSlashes)) {
+          if (encodedSlashes < 0) {
+            encodedSlashes = slashes;
+            slashPeriod = 2 * (slashes + 1);
+          }
+          if (!inString) inString = char;
+          else if (inString === char) inString = null;
+        } else if (!inString && char === "[") nesting++;
+        else if (!inString && char === "]" && --nesting === 0) break;
+        slashes = char === "\\" ? slashes + 1 : 0;
+      }
     } else {
       while (end < text.length && !/[\s,}]/.test(text[end])) end++;
     }
