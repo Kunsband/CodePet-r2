@@ -47,6 +47,11 @@ test("checks coalesce, cache successful results and query only the configured pu
   now = 16 * 60_000; await checker.check(); assert.equal(count, 2);
 });
 
+test("this fork checks its own releases, so an upstream merge cannot silently restore the upstream channel", () => {
+  assert.equal(RELEASE_REPOSITORY, "Kunsband/CodePet-r2");
+  assert.equal(RELEASE_API, "https://api.github.com/repos/Kunsband/CodePet-r2/releases/latest");
+});
+
 test("offline, rate limits, missing/malformed releases, drafts and previews stay unavailable", async () => {
   for (const fetchImpl of [
     async () => { throw new Error("offline"); },
