@@ -206,7 +206,10 @@ class CodexProxy {
     const host = String(request.headers.host || "").toLowerCase();
     if (host !== `127.0.0.1:${this.port}` && host !== `localhost:${this.port}`) return false;
     const origin = String(request.headers.origin || "").toLowerCase();
-    return !(origin === "null" || origin.startsWith("http://") || origin.startsWith("https://"));
+    if (origin === "null" || origin.startsWith("http://") || origin.startsWith("https://")) return false;
+    // 교차 사이트 GET(img, no-cors fetch)에는 브라우저가 Origin 없이 Sec-Fetch-Site만 붙입니다.
+    const site = String(request.headers["sec-fetch-site"] || "").toLowerCase();
+    return site !== "cross-site" && site !== "same-site";
   }
 
   async start() {

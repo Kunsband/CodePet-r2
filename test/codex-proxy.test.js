@@ -611,3 +611,41 @@ test("루프백이 아닌 Host나 웹 Origin으로 들어온 요청은 토큰을
     upstream.close();
   }
 });
+
+test("Origin 없이 Sec-Fetch-Site만 붙는 웹페이지의 교차 사이트 GET도 토큰을 붙이지 않고 거부한다", async () => {
+  let upstreamHits = 0;
+  const upstream = await startUpstream((request, response) => {
+    upstreamHits += 1;
+    response.writeHead(200);
+    response.end("{}");
+  });
+  const proxy = poolProxy({
+    upstreamPort: upstream.address().port,
+    accounts: [{ key: "a", label: "A", authPath: "token-a" }],
+    port: 19243,
+  });
+  const proxyPort = await proxy.start();
+
+  try {
+    // <img src> / fetch(url, {mode: "no-cors"})는 GET이라 Origin이 없고 Sec-Fetch-Site만 옵니다. (Chromium 실측)
+    for (const site of ["cross-site", "same-site"]) {
+      assert.match(await rawRequest(proxyPort, [
+        "GET /v1/models HTTP/1.1", `Host: 127.0.0.1:${proxyPort}`,
+        `Sec-Fetch-Site: ${site}`, "Sec-Fetch-Mode: no-cors", "Sec-Fetch-Dest: image",
+      ]), /403/);
+    }
+    assert.equal(upstreamHits, 0);
+
+    // 사용자가 직접 연 요청(none)과 Sec-Fetch 헤더가 없는 Codex 요청은 그대로 중계합니다.
+    assert.match(await rawRequest(proxyPort, [
+      "GET /v1/models HTTP/1.1", `Host: 127.0.0.1:${proxyPort}`, "Sec-Fetch-Site: none",
+    ]), /200/);
+    assert.match(await rawRequest(proxyPort, [
+      "GET /v1/models HTTP/1.1", `Host: 127.0.0.1:${proxyPort}`,
+    ]), /200/);
+    assert.equal(upstreamHits, 2);
+  } finally {
+    proxy.stop();
+    upstream.close();
+  }
+});
