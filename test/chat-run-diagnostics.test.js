@@ -61,6 +61,7 @@ test("xAI·Google·GitHub 세분화 토큰과 JWT를 제거하고 비슷한 패�
 test("Cookie·Set-Cookie 헤더는 공백이 섞인 값 전체를 가리고 코드 속 cookie 표기는 남긴다", () => {
   const headers = [
     "Cookie: session=synthetic; other=synthetic2",
+    "Cookie: sid==synthetic-equals",
     "< set-cookie: sid=synthetic3; Path=/; HttpOnly",
     'curl -H "Cookie: a=synthetic4; b=synthetic5" https://example.com/api',
   ];
@@ -69,39 +70,90 @@ test("Cookie·Set-Cookie 헤더는 공백이 섞인 값 전체를 가리고 코�
   assert.doesNotMatch(result, /synthetic/);
   assert.deepEqual(result.split("\n"), [
     "Cookie: [REDACTED]",
+    "Cookie: [REDACTED]",
     "< set-cookie: [REDACTED]",
     'curl -H "Cookie: [REDACTED]',
   ]);
 
-  const code = "const cookie: string = readCookie();\nThe cookie: it is stored per site.";
+  const code = [
+    "const cookie: string = readCookie();",
+    "The cookie: it is stored per site.",
+    'var x={get:g,cookie:function(e){document.cookie=e},keep:"KEEPME"};',
+    "const store = { cookie: (n)=>read(n), other: 1 };",
+    'var a={cookie:e=>e.split(";"),path:"/"};',
+    'var b={cookie:e==null?"":e,keep:"KEEPME"};',
+    "var c={cookie:null==e?void 0:e.cookie,other:1};",
+    "var d={cookie:e===t?a:b,other:1};",
+    "Remember to set the cookie:",
+    "NODE_ENV=production npm start",
+  ].join("\n");
   assert.equal(redactSensitiveText(code), code);
 });
 
-test("curl 쿠키 옵션 값은 가리고 다른 도구의 -b 옵션과 쿠키 파일 경로는 남긴다", () => {
-  const commands = [
-    'curl -b "session=synthetic-a; other=synthetic-b" https://example.com/api',
-    "curl --cookie 'sid=synthetic-c' https://example.com",
-    "curl -sSLb sid=synthetic-d https://example.com",
-    'curl.exe -b "a=synthetic-e" https://example.com',
+test("curl 명령의 -b·--cookie 값은 따옴표·줄 이음·감싼 셸과 관계없이 가린다", () => {
+  const cases = [
+    ['curl -b "sid=synthetic-1" https://example.com', "curl -b [REDACTED] https://example.com"],
+    ['curl -b sid="synthetic-2" https://example.com', "curl -b [REDACTED] https://example.com"],
+    ["curl -bsid=synthetic-3 https://example.com", "curl -b[REDACTED] https://example.com"],
+    ["curl -sSLb sid=synthetic-4 https://example.com", "curl -sSLb [REDACTED] https://example.com"],
+    ["curl --cookie 'sid=synthetic-5' https://example.com", "curl --cookie [REDACTED] https://example.com"],
+    ["curl --cookie=sid=synthetic-6 https://example.com", "curl --cookie=[REDACTED] https://example.com"],
+    ["curl 'https://example.com' \\\n  -b 'sid=synthetic-7; csrf=synthetic-8'", "curl 'https://example.com' \\\n  -b [REDACTED]"],
+    ['curl ^"https://example.com^" ^\n  -b ^"sid=synthetic-9^"', 'curl ^"https://example.com^" ^\n  -b [REDACTED]'],
+    [`bash -lc 'curl -b "sid=synthetic-10" https://example.com'`, "bash -lc 'curl -b [REDACTED] https://example.com'"],
+    ['powershell.exe -Command "curl.exe -b \\"sid=synthetic-11\\" https://example.com"', 'powershell.exe -Command "curl.exe -b [REDACTED] https://example.com"'],
+    ["sudo env A=1 curl -b sid=synthetic-12 https://example.com", "sudo env A=1 curl -b [REDACTED] https://example.com"],
+    ["x=$(curl -s -b sid=synthetic-13 https://example.com)", "x=$(curl -s -b [REDACTED] https://example.com)"],
+    ["timeout 10 curl -b sid=synthetic-14 https://example.com", "timeout 10 curl -b [REDACTED] https://example.com"],
+    ["if curl -b sid=synthetic-15 https://example.com; then echo ok; fi", "if curl -b [REDACTED] https://example.com; then echo ok; fi"],
+    ['{"command":["bash","-lc","curl -b sid=synthetic-16 https://example.com"]}', '{"command":["bash","-lc","curl -b [REDACTED] https://example.com"]}'],
+    ["curl https://example.com?a=1&b=2 -b sid=synthetic-17", "curl https://example.com?a=1&b=2 -b [REDACTED]"],
+    ["curl -#b sid=synthetic-18 https://example.com", "curl -#b [REDACTED] https://example.com"],
+    ["curl -b sid=synthetic-19^&b=synthetic-20 https://example.com", "curl -b [REDACTED] https://example.com"],
+    ["curl -b 'sid=synthetic-21\nsynthetic-22' https://example.com", "curl -b [REDACTED] https://example.com"],
   ];
-  const result = redactSensitiveText(commands.join("\n"));
+  for (const [input, expected] of cases) assert.equal(redactSensitiveText(input), expected);
+});
 
-  assert.doesNotMatch(result, /synthetic/);
-  assert.deepEqual(result.split("\n"), [
-    "curl -b [REDACTED] https://example.com/api",
-    "curl --cookie [REDACTED] https://example.com",
-    "curl -sSLb [REDACTED] https://example.com",
-    "curl.exe -b [REDACTED] https://example.com",
-  ]);
+test("curl 쿠키 처리는 다른 명령의 -b 인자와 문장, 쿠키 파일 경로는 바꾸지 않는다", () => {
+  const unchanged = [
+    "curl -s https://example.com && git checkout -b feature-x",
+    "curl -s https://example.com | cut -b 1-80",
+    "curl -sS https://example.com # then git checkout -b feat",
+    "curl -sS https://example.com 2>&1 | grep -b err",
+    "git checkout -b feature-branch",
+    "curl -ob out.txt https://example.com",
+    "curl --cookie-jar jar.txt https://example.com",
+  ];
+  for (const input of unchanged) assert.equal(redactSensitiveText(input), input);
+});
 
-  const unrelated = "git checkout -b feature-branch\npython bench.py -b 1\ncurl --cookie-jar jar.txt https://example.com";
-  assert.equal(redactSensitiveText(unrelated), unrelated);
+test("curl 명령이 반복되는 긴 입력도 선형 시간 안에 처리한다", () => {
+  const started = Date.now();
+  for (const input of ["curl -b '".repeat(300_000), "curl -b x ".repeat(300_000), `bash -lc '${"curl -b x; ".repeat(200_000)}'`]) {
+    redactSensitiveText(input);
+  }
+  assert.ok(Date.now() - started < 3000, `${Date.now() - started}ms`);
+});
+
+test("cookie: 가 반복되는 긴 줄도 선형 시간 안에 처리한다", () => {
+  // 이름 길이 제한이 없으면 28만 자 입력에 15초 넘게 걸립니다.
+  const started = Date.now();
+  redactSensitiveText("cookie:".repeat(40_000));
+  assert.ok(Date.now() - started < 2000, `${Date.now() - started}ms`);
+});
+
+test("'-'로 이어진 eyJ가 반복되는 긴 단어도 선형 시간 안에 처리한다", () => {
+  // \b로 시작하면 51만 자 입력에 20초 넘게 걸립니다.
+  const started = Date.now();
+  redactSensitiveText("eyJaaaaaaaaaaaa-".repeat(32_000));
+  assert.ok(Date.now() - started < 2000, `${Date.now() - started}ms`);
 });
 
 test("토큰 접두사로 시작하는 수백만 자 출력도 예외 없이 처리한다", () => {
   // base64url로 인코딩한 큰 JSON 등은 eyJ로 시작하는 긴 단어가 됩니다.
   const tail = "a".repeat(10_000_000);
-  for (const prefix of ["eyJ", "xai-", "ya29.", "GOCSPX-", "github_pat_", "Cookie: a=", "curl -b ", "--cookie "]) {
+  for (const prefix of ["eyJ", "xai-", "ya29.", "GOCSPX-", "github_pat_", "Cookie: a=", "curl -b ", "--cookie ", "bash -lc 'curl -b "]) {
     assert.doesNotThrow(() => redactSensitiveText(prefix + tail), prefix);
   }
 });
@@ -184,4 +236,41 @@ test("모든 진단 텍스트 필드를 빈 문자열이라도 포함한다", ()
     autoApprove: false,
     approvedRetry: false,
   });
+});
+
+test('cookie values starting with equals and arbitrarily long token names remain masked', () => {
+  for (const name of ['sid', 'a'.repeat(257), 'a'.repeat(100_000)]) {
+    for (const header of ['Cookie', 'Set-Cookie']) {
+      assert.equal(redactSensitiveText(`${header}: ${name}==synthetic&value`), `${header}: [REDACTED]`);
+    }
+  }
+  for (const value of ['=synthetic&value', '=synthetic?value', '=synthetic(value)', '=synthetic{value}', '=synthetic!value', '=synthetic|value']) {
+    assert.equal(redactSensitiveText('Cookie: sid=' + value), 'Cookie: [REDACTED]');
+  }
+  assert.equal(redactSensitiveText('cookie:e=>e'), 'cookie:e=>e');
+});
+
+test('JWTs after hyphens retain the original word-boundary coverage', () => {
+  const jwt = 'eyJ' + 'a'.repeat(12) + '.eyJ' + 'b'.repeat(12) + '.signature';
+  for (const prefix of ['', '-', 'prefix-', 'prefix--', '(']) {
+    assert.equal(redactSensitiveText(prefix + jwt), prefix + '[REDACTED]');
+  }
+  assert.equal(redactSensitiveText('eyJshort-' + jwt), '[REDACTED]');
+  for (const prefix of ['x', '_', '9']) assert.equal(redactSensitiveText(prefix + jwt), prefix + jwt);
+});
+
+test('restored cookie and JWT coverage stays bounded on adversarial inputs', () => {
+  const jwt = 'eyJ' + 'a'.repeat(12) + '.eyJ' + 'b'.repeat(12) + '.signature';
+  const inputs = [
+    'curl -b "sid=' + 'a'.repeat(2_000_000) + 'synthetic-value" https://example.com',
+    'cookie:'.repeat(100_000) + 'a'.repeat(100_000) + '=synthetic-value',
+    'eyJaaaaaaaaaaaa-'.repeat(100_000) + jwt,
+    'curl https://example.com; cut -b 1-80\n'.repeat(20_000),
+  ];
+  for (const input of inputs) {
+    const started = performance.now();
+    const output = redactSensitiveText(input);
+    assert.doesNotMatch(output, /synthetic-value/);
+    assert.ok(performance.now() - started < 4000, `${performance.now() - started}ms`);
+  }
 });
