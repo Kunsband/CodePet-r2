@@ -181,6 +181,23 @@ test("credential files printed by a command are redacted inside tool output text
   assert.match(raw, /done/);
 });
 
+test("cookie headers are redacted in verbose command output and structured tool inputs", async t => {
+  const { store } = await fixture(t);
+  const collector = await begin(store, "s1", "claude");
+  const parse = createLineParser("claude", event => collector.add(event));
+  parse(JSON.stringify({ type: "assistant", message: { content: [
+    { type: "tool_use", name: "WebFetch", input: { url: "https://example.com", headers: { Cookie: "a=synthetic-a; b=synthetic-b" } } },
+  ] } }));
+  parse(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", content: [
+    { type: "text", text: "> Cookie: session=synthetic-c; other=synthetic-d\n< set-cookie: sid=synthetic-e; Path=/\nHTTP 200" },
+  ] }] } }));
+  await parse.flushTraces();
+  const id = await store.save({ collector, status: "completed" });
+  const raw = JSON.stringify(await readAll(store, id));
+  assert.doesNotMatch(raw, /synthetic-/);
+  assert.match(raw, /HTTP 200/);
+});
+
 test("all provider parsers preserve complete tool inputs and outputs without changing UI events", () => {
   const fixtures = [
     ["codex", { type: "item.started", item: { id: "c1", type: "command_execution", command: "npm test" } }, "npm test"],

@@ -21,7 +21,9 @@ function validTraceAgent(id) {
 
 function safeText(value) {
   return redactSensitiveText(String(value ?? "").replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)/g, "[REDACTED PRIVATE KEY]"))
-    .replace(/(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|password|secret|authorization|cookie)["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,}\r\n]+)/gi, "$1[REDACTED]");
+    .replace(/(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|password|secret|authorization)["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,}\r\n]+)/gi, "$1[REDACTED]")
+    // cookie는 코드와 문장에도 흔한 단어라 따옴표로 감싼 JSON·딕셔너리 키만 대상으로 한다.
+    .replace(/(["'](?:set-)?cookie["']\s*:\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,}\r\n]+)/gi, "$1[REDACTED]");
 }
 
 function safeValue(value, seen = new WeakSet()) {
@@ -36,7 +38,7 @@ function safeValue(value, seen = new WeakSet()) {
     result = Object.create(null);
     for (const [key, item] of Object.entries(value)) {
       if (item === undefined || /thinking|reasoning|signature|image|base64/i.test(key)) continue;
-      result[safeText(key)] = /key|token|secret|password|credential|authorization/i.test(key)
+      result[safeText(key)] = /key|token|secret|password|credential|authorization|cookie/i.test(key)
         ? "[REDACTED]" : safeValue(item, seen);
     }
   }

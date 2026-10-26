@@ -14,6 +14,9 @@ function redactSensitiveText(text) {
     // 인증 헤더와 Bearer 토큰 값을 제거한다.
     .replace(/(\bAuthorization\s*:\s*)[^\r\n]*/gi, "$1[REDACTED]")
     .replace(/(\bBearer\s+)[^\s,;]+/gi, "$1[REDACTED]")
+    // Cookie·Set-Cookie 헤더는 "a=1; b=2"처럼 공백이 섞이므로 값 전체를 줄 끝까지 제거한다.
+    // 이름=값 형태가 이어질 때만 헤더로 보고, 코드의 "cookie: string" 같은 표기는 남긴다.
+    .replace(/(\b(?:set-)?cookie\s*:\s*)(?=[^\s;,=]+=)[^\r\n]*/gi, "$1[REDACTED]")
     // 알려진 API 키 및 토큰 접두사로 시작하는 값을 제거한다.
     .replace(
       /\b(?:sk-ant-|sk-|ghp_|gho_|xoxb-|xoxp-|AKIA)[A-Za-z0-9._-]+/gi,
