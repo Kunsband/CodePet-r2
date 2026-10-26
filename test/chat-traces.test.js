@@ -4,7 +4,8 @@ const fs = require("node:fs/promises");
 const os = require("node:os");
 const path = require("node:path");
 const { randomUUID } = require("node:crypto");
-const { ChatTraceStore, PAGE_BYTES, RECORDS_PER_CHUNK, RECENT_BYTES } = require("../src/chat/chat-traces");
+const { gunzipSync } = require("node:zlib");
+const { ChatTraceStore, safeText, PAGE_BYTES, RECORDS_PER_CHUNK, RECENT_BYTES } = require("../src/chat/chat-traces");
 const { createLineParser } = require("../src/chat/chat-events");
 
 async function fixture(t, options = {}) {
@@ -161,6 +162,95 @@ test("credentials, reasoning and images are excluded even beyond the former trun
   assert.doesNotMatch(raw, /private-reasoning|private-image|hidden-env|hidden-password|private-bearer|private-token/);
   assert.match(raw, /all tests passed/);
   assert.match(raw, /REDACTED/);
+});
+
+test("credential files printed by a command are redacted inside tool output text", async t => {
+  const { store } = await fixture(t);
+  const collector = await begin(store, "s1", "codex");
+  const parse = createLineParser("codex", event => collector.add(event));
+  const authJson = JSON.stringify({
+    tokens: { id_token: "plain-id-token-value", session_token: "plain-session-value" },
+    cookie: "plain-cookie-value",
+  });
+  parse(JSON.stringify({ type: "item.completed", item: {
+    type: "command_execution", command: "cat ~/.codex/auth.json", aggregated_output: `${authJson}\ndone`, exit_code: 0,
+  } }));
+  await parse.flushTraces();
+  const id = await store.save({ collector, status: "completed" });
+  const raw = JSON.stringify(await readAll(store, id));
+  assert.doesNotMatch(raw, /plain-id-token-value|plain-session-value|plain-cookie-value/);
+  assert.match(raw, /done/);
+});
+
+test("escaped and repeatedly encoded credentials stay redacted on disk and after reopening", async t => {
+  const { root, store } = await fixture(t);
+  const collector = await begin(store);
+  const parse = createLineParser("codex", event => collector.add(event));
+  const keys = ["api_key", "access_token", "refresh_token", "id_token", "session_token", "password", "secret", "authorization", "cookie", "set-cookie"];
+  let count = 0;
+  for (const key of keys) {
+    for (let depth = 0; depth < 4; depth++) {
+      for (let slashes = 0; slashes < 4; slashes++) {
+        const value = `prefix${"\\".repeat(slashes)}"synthetic-tail${"\\".repeat(slashes)}`;
+        let output = JSON.stringify({ [key]: value, status: "kept-output" });
+        for (let layer = 0; layer < depth; layer++) output = JSON.stringify(output);
+        parse(JSON.stringify({ type: "item.completed", item: {
+          type: "command_execution", command: "cat synthetic-fixture.json", aggregated_output: `before\n${output}\nafter`, exit_code: 0,
+        } }));
+        count++;
+      }
+    }
+  }
+  await parse.flushTraces();
+  const id = await store.save({ collector, status: "completed" });
+  const directory = path.join(root, "traces", id);
+  const chunks = (await fs.readdir(directory)).filter(file => /^\d+\.jsonl\.gz$/.test(file));
+  assert.ok(chunks.length > 0);
+  for (const file of chunks) {
+    assert.doesNotMatch(gunzipSync(await fs.readFile(path.join(directory, file))).toString("utf8"), /synthetic-tail/);
+  }
+  const events = await readAll(new ChatTraceStore({ root }), id);
+  assert.equal(events.length, count);
+  for (const event of events) {
+    assert.doesNotMatch(event.output, /synthetic-tail/);
+    assert.match(event.output, /REDACTED/);
+    assert.match(event.output, /kept-output/);
+    assert.match(event.output, /^before\n/);
+    assert.match(event.output, /\nafter$/);
+  }
+});
+
+test("named value redaction handles long escaped strings and preserves nearby ordinary text", () => {
+  const value = "a".repeat(10_000_000) + '"synthetic-tail';
+  const json = JSON.stringify({ password: value, status: "kept-output" });
+  for (const input of [json, JSON.stringify(json)]) {
+    const result = safeText(input);
+    assert.doesNotMatch(result, /synthetic-tail/);
+    assert.match(result, /kept-output/);
+    assert.ok(result.length < 150);
+  }
+  assert.equal(safeText("cookie: string; cookie: ordinary prose"), "cookie: string; cookie: ordinary prose");
+  assert.equal(safeText("password=plain-value status=ok"), "password=[REDACTED] status=ok");
+  assert.equal(safeText("{'secret': 'prefix\\'synthetic-tail', 'status': 'ok'}"), "{'secret': [REDACTED], 'status': 'ok'}");
+  assert.equal(safeText('password: "unterminated\\"synthetic-tail\nnext line'), 'password: [REDACTED]\nnext line');
+});
+
+test("cookie headers are redacted in verbose command output and structured tool inputs", async t => {
+  const { store } = await fixture(t);
+  const collector = await begin(store, "s1", "claude");
+  const parse = createLineParser("claude", event => collector.add(event));
+  parse(JSON.stringify({ type: "assistant", message: { content: [
+    { type: "tool_use", name: "WebFetch", input: { url: "https://example.com", headers: { Cookie: "a=synthetic-a; b=synthetic-b" } } },
+    { type: "tool_use", name: "Bash", input: { command: 'curl -b "sid=synthetic-f; csrf=synthetic-g" https://example.com/api' } },
+  ] } }));
+  parse(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", content: [
+    { type: "text", text: "> Cookie: session=synthetic-c; other=synthetic-d\n< set-cookie: sid=synthetic-e; Path=/\nHTTP 200" },
+  ] }] } }));
+  await parse.flushTraces();
+  const id = await store.save({ collector, status: "completed" });
+  const raw = JSON.stringify(await readAll(store, id));
+  assert.doesNotMatch(raw, /synthetic-/);
+  assert.match(raw, /HTTP 200/);
 });
 
 test("all provider parsers preserve complete tool inputs and outputs without changing UI events", () => {

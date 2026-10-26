@@ -42,6 +42,70 @@ test("인증 헤더와 토큰 및 민감한 환경변수 값을 제거한다", (
   assert.doesNotMatch(result, /AKIAEXAMPLE123456/);
 });
 
+test("xAI·Google·GitHub 세분화 토큰과 JWT를 제거하고 비슷한 패키지 이름은 남긴다", () => {
+  // 실제 토큰 형식과 같은 문자열은 저장소 비밀 검사에 걸리므로 실행 시 조립한다.
+  const secrets = [
+    "xai-" + "A1".repeat(20),
+    "ya29." + "a0Ab".repeat(8),
+    "GOCSPX-" + "Qw".repeat(14),
+    "AIza" + "Sy".repeat(17) + "Z",
+    "github_pat_" + "11AB".repeat(8),
+    "eyJhbGciOiJSUzI1NiJ9" + ".eyJzdWIiOiIxMjM0NTY3ODkwIn0" + ".c2lnbmF0dXJl",
+  ];
+  const result = redactSensitiveText(`${secrets.join("\n")}\nnpm install @xai-official/grok`);
+
+  for (const secret of secrets) assert.equal(result.includes(secret), false, secret.slice(0, 8));
+  assert.match(result, /@xai-official\/grok/);
+});
+
+test("Cookie·Set-Cookie 헤더는 공백이 섞인 값 전체를 가리고 코드 속 cookie 표기는 남긴다", () => {
+  const headers = [
+    "Cookie: session=synthetic; other=synthetic2",
+    "< set-cookie: sid=synthetic3; Path=/; HttpOnly",
+    'curl -H "Cookie: a=synthetic4; b=synthetic5" https://example.com/api',
+  ];
+  const result = redactSensitiveText(headers.join("\n"));
+
+  assert.doesNotMatch(result, /synthetic/);
+  assert.deepEqual(result.split("\n"), [
+    "Cookie: [REDACTED]",
+    "< set-cookie: [REDACTED]",
+    'curl -H "Cookie: [REDACTED]',
+  ]);
+
+  const code = "const cookie: string = readCookie();\nThe cookie: it is stored per site.";
+  assert.equal(redactSensitiveText(code), code);
+});
+
+test("curl 쿠키 옵션 값은 가리고 다른 도구의 -b 옵션과 쿠키 파일 경로는 남긴다", () => {
+  const commands = [
+    'curl -b "session=synthetic-a; other=synthetic-b" https://example.com/api',
+    "curl --cookie 'sid=synthetic-c' https://example.com",
+    "curl -sSLb sid=synthetic-d https://example.com",
+    'curl.exe -b "a=synthetic-e" https://example.com',
+  ];
+  const result = redactSensitiveText(commands.join("\n"));
+
+  assert.doesNotMatch(result, /synthetic/);
+  assert.deepEqual(result.split("\n"), [
+    "curl -b [REDACTED] https://example.com/api",
+    "curl --cookie [REDACTED] https://example.com",
+    "curl -sSLb [REDACTED] https://example.com",
+    "curl.exe -b [REDACTED] https://example.com",
+  ]);
+
+  const unrelated = "git checkout -b feature-branch\npython bench.py -b 1\ncurl --cookie-jar jar.txt https://example.com";
+  assert.equal(redactSensitiveText(unrelated), unrelated);
+});
+
+test("토큰 접두사로 시작하는 수백만 자 출력도 예외 없이 처리한다", () => {
+  // base64url로 인코딩한 큰 JSON 등은 eyJ로 시작하는 긴 단어가 됩니다.
+  const tail = "a".repeat(10_000_000);
+  for (const prefix of ["eyJ", "xai-", "ya29.", "GOCSPX-", "github_pat_", "Cookie: a=", "curl -b ", "--cookie "]) {
+    assert.doesNotThrow(() => redactSensitiveText(prefix + tail), prefix);
+  }
+});
+
 test("사용자 홈 디렉터리 경로를 물결표로 치환한다", () => {
   const input =
     "C:\\Users\\아무개\\project C:/Users/Another/project /home/아무개/project /Users/someone/project";
