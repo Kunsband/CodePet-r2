@@ -19,11 +19,50 @@ function validTraceAgent(id) {
   return typeof id === "string" && (AGENTS.has(id) || /^(?:codex|claude|agy|grok)-[1-9]\d{0,8}$/.test(id));
 }
 
+function redactNamedValues(text) {
+  const keys = /(api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|password|secret|authorization|(?:set-)?cookie)(\\*["'])?\s*[:=]\s*/gi;
+  const parts = [];
+  let copied = 0;
+  let match;
+  while ((match = keys.exec(text))) {
+    // Cookie is also an ordinary word: require matching quoted key delimiters,
+    // including their backslashes when the JSON was encoded as a string again.
+    if (/cookie$/i.test(match[1]) && (!match[2]
+      || text.slice(match.index - match[2].length, match.index) !== match[2])) continue;
+    const start = keys.lastIndex;
+    if (start === text.length) continue;
+    let quoteAt = start;
+    while (text[quoteAt] === "\\") quoteAt++;
+    const quote = text[quoteAt];
+    let end = start;
+    if (quote === '"' || quote === "'") {
+      const encodedSlashes = quoteAt - start;
+      // A delimiter has 0, 1, 3, ... backslashes after repeated JSON encoding.
+      // Literal backslashes add pairs at that depth; an escaped quote adds one.
+      // Scan instead of repeating regex alternatives, which can exhaust V8's
+      // regex stack on multi-megabyte values. An unfinished quote masks to EOL.
+      const slashPeriod = 2 * (encodedSlashes + 1);
+      let slashes = 0;
+      end = quoteAt + 1;
+      while (end < text.length && text[end] !== "\r" && text[end] !== "\n") {
+        const char = text[end++];
+        if (char === quote && slashes % slashPeriod === encodedSlashes) break;
+        slashes = char === "\\" ? slashes + 1 : 0;
+      }
+    } else {
+      while (end < text.length && !/[\s,}]/.test(text[end])) end++;
+    }
+    if (end === start) continue;
+    parts.push(text.slice(copied, start), "[REDACTED]");
+    copied = end;
+    keys.lastIndex = end;
+  }
+  parts.push(text.slice(copied));
+  return parts.join("");
+}
+
 function safeText(value) {
-  return redactSensitiveText(String(value ?? "").replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)/g, "[REDACTED PRIVATE KEY]"))
-    .replace(/(["']?(?:api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|password|secret|authorization)["']?\s*[:=]\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,}\r\n]+)/gi, "$1[REDACTED]")
-    // cookie는 코드와 문장에도 흔한 단어라 따옴표로 감싼 JSON·딕셔너리 키만 대상으로 한다.
-    .replace(/(["'](?:set-)?cookie["']\s*:\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s,}\r\n]+)/gi, "$1[REDACTED]");
+  return redactNamedValues(redactSensitiveText(String(value ?? "").replace(/-----BEGIN [^-]*PRIVATE KEY-----[\s\S]*?(?:-----END [^-]*PRIVATE KEY-----|$)/g, "[REDACTED PRIVATE KEY]")));
 }
 
 function safeValue(value, seen = new WeakSet()) {
