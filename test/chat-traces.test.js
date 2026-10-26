@@ -163,6 +163,24 @@ test("credentials, reasoning and images are excluded even beyond the former trun
   assert.match(raw, /REDACTED/);
 });
 
+test("credential files printed by a command are redacted inside tool output text", async t => {
+  const { store } = await fixture(t);
+  const collector = await begin(store, "s1", "codex");
+  const parse = createLineParser("codex", event => collector.add(event));
+  const authJson = JSON.stringify({
+    tokens: { id_token: "plain-id-token-value", session_token: "plain-session-value" },
+    cookie: "plain-cookie-value",
+  });
+  parse(JSON.stringify({ type: "item.completed", item: {
+    type: "command_execution", command: "cat ~/.codex/auth.json", aggregated_output: `${authJson}\ndone`, exit_code: 0,
+  } }));
+  await parse.flushTraces();
+  const id = await store.save({ collector, status: "completed" });
+  const raw = JSON.stringify(await readAll(store, id));
+  assert.doesNotMatch(raw, /plain-id-token-value|plain-session-value|plain-cookie-value/);
+  assert.match(raw, /done/);
+});
+
 test("all provider parsers preserve complete tool inputs and outputs without changing UI events", () => {
   const fixtures = [
     ["codex", { type: "item.started", item: { id: "c1", type: "command_execution", command: "npm test" } }, "npm test"],

@@ -42,6 +42,22 @@ test("인증 헤더와 토큰 및 민감한 환경변수 값을 제거한다", (
   assert.doesNotMatch(result, /AKIAEXAMPLE123456/);
 });
 
+test("xAI·Google·GitHub 세분화 토큰과 JWT를 제거하고 비슷한 패키지 이름은 남긴다", () => {
+  // 실제 토큰 형식과 같은 문자열은 저장소 비밀 검사에 걸리므로 실행 시 조립한다.
+  const secrets = [
+    "xai-" + "A1".repeat(20),
+    "ya29." + "a0Ab".repeat(8),
+    "GOCSPX-" + "Qw".repeat(14),
+    "AIza" + "Sy".repeat(17) + "Z",
+    "github_pat_" + "11AB".repeat(8),
+    "eyJhbGciOiJSUzI1NiJ9" + ".eyJzdWIiOiIxMjM0NTY3ODkwIn0" + ".c2lnbmF0dXJl",
+  ];
+  const result = redactSensitiveText(`${secrets.join("\n")}\nnpm install @xai-official/grok`);
+
+  for (const secret of secrets) assert.equal(result.includes(secret), false, secret.slice(0, 8));
+  assert.match(result, /@xai-official\/grok/);
+});
+
 test("사용자 홈 디렉터리 경로를 물결표로 치환한다", () => {
   const input =
     "C:\\Users\\아무개\\project C:/Users/Another/project /home/아무개/project /Users/someone/project";
