@@ -712,6 +712,11 @@ test("결론이 나지 않는 토론은 기본 9턴에서 끝내고 예산 도�
     agents: makeAgents(),
     runAgent: ({ agent }) => {
       calls.push(agent.id);
+      // 상한이 빠지면 즉시 응답하는 토론이 이벤트 루프를 점유해 테스트 타임아웃도
+      // 동작하지 않으므로, 넉넉한 호출 수에서 실패로 끊어 멈춤 대신 실패하게 합니다.
+      if (calls.length > 20) {
+        return { promise: Promise.resolve({ ok: false, error: "토론 상한 없음" }), cancel() {} };
+      }
       return { promise: Promise.resolve({ ok: true, text: "검토 중" }), cancel() {} };
     },
   });
