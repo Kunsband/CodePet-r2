@@ -20,12 +20,13 @@ function redactSensitiveText(text) {
       "[REDACTED]",
     )
     // xAI·Google·GitHub 세분화 토큰은 접두사가 패키지 이름과 겹칠 수 있어 길이까지 확인한다.
+    // V8에서 {n,}은 수백만 자 단어에서 스택을 넘기므로 {n}과 *로 나눠 쓴다.
     .replace(
-      /\b(?:xai-[A-Za-z0-9]{20,}|ya29\.[A-Za-z0-9_-]{20,}|GOCSPX-[A-Za-z0-9_-]{20,}|AIza[A-Za-z0-9_-]{35}|github_pat_[A-Za-z0-9_]{20,})/g,
+      /\b(?:xai-[A-Za-z0-9]{20}[A-Za-z0-9]*|ya29\.[A-Za-z0-9_-]{20}[A-Za-z0-9_-]*|GOCSPX-[A-Za-z0-9_-]{20}[A-Za-z0-9_-]*|AIza[A-Za-z0-9_-]{35}|github_pat_[A-Za-z0-9_]{20}[A-Za-z0-9_]*)/g,
       "[REDACTED]",
     )
     // OAuth id_token 등 JWT 형식 값을 제거한다.
-    .replace(/\beyJ[\w-]{10,}\.eyJ[\w-]{10,}\.[\w-]*/g, "[REDACTED]")
+    .replace(/\beyJ[\w-]{10}[\w-]*\.eyJ[\w-]{10}[\w-]*\.[\w-]*/g, "[REDACTED]")
     // 민감한 이름을 가진 환경변수 대입식의 값 부분을 제거한다.
     .replace(
       /\b([A-Za-z_][A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Za-z0-9_]*\s*=\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s\r\n]+)/gi,

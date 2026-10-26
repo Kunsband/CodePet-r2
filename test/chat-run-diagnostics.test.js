@@ -58,6 +58,14 @@ test("xAI·Google·GitHub 세분화 토큰과 JWT를 제거하고 비슷한 패�
   assert.match(result, /@xai-official\/grok/);
 });
 
+test("토큰 접두사로 시작하는 수백만 자 출력도 예외 없이 처리한다", () => {
+  // base64url로 인코딩한 큰 JSON 등은 eyJ로 시작하는 긴 단어가 됩니다.
+  const tail = "a".repeat(10_000_000);
+  for (const prefix of ["eyJ", "xai-", "ya29.", "GOCSPX-", "github_pat_"]) {
+    assert.doesNotThrow(() => redactSensitiveText(prefix + tail), prefix);
+  }
+});
+
 test("사용자 홈 디렉터리 경로를 물결표로 치환한다", () => {
   const input =
     "C:\\Users\\아무개\\project C:/Users/Another/project /home/아무개/project /Users/someone/project";
