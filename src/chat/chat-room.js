@@ -10,9 +10,12 @@ const { extractEmoticons } = require("./chat-emoticons");
 // - 같은 사용자 메시지의 수신자는 같은 대화 스냅숏으로 동시에 시작합니다.
 //   후속 멘션과 토론은 앞 실행이 끝난 뒤 이어집니다.
 // - 에이전트 답변 속 @멘션은 실제 호출입니다: 호출된 에이전트가 이어서
-//   응답합니다. @ 없이 이름만 쓰면 언급입니다.
-// - 토론은 합의/결론, 실행 실패 또는 사용자 중지까지 이어집니다.
+//   응답합니다. @ 없이 이름만 쓰면 언급입니다. 무한 연쇄는 사용자 발화 기준
+//   연쇄 깊이 상한(mentionChainLimit)으로 막습니다.
+// - 토론은 합의/결론, 실행 실패, 사용자 중지 또는 실행 예산 소진까지 이어집니다.
 const REPLY_EXCERPT_LIMIT = 200;
+const DEFAULT_MENTION_CHAIN_LIMIT = 2;
+const DEFAULT_DISCUSSION_RUN_BUDGET = 9;
 
 let messageSeq = 0;
 function nextMessageId() {
@@ -68,6 +71,12 @@ class ChatRoom extends EventEmitter {
     // runAgent({agent, prompt, runId, attachments, emitEvent}) => { promise, cancel }
     this.runAgent = options.runAgent;
     this.prepareAgent = options.prepareAgent;
+    this.mentionChainLimit = Number.isInteger(options.mentionChainLimit)
+      ? options.mentionChainLimit
+      : DEFAULT_MENTION_CHAIN_LIMIT;
+    this.discussionRunBudget = Number.isInteger(options.discussionRunBudget)
+      ? options.discussionRunBudget
+      : DEFAULT_DISCUSSION_RUN_BUDGET;
     this.meta = {
       permissionMode: "chat",
       ...(options.meta || {}),
@@ -491,7 +500,7 @@ class ChatRoom extends EventEmitter {
       discussion: context.discussion || null,
       broadcast,
       activeAgentIds: this.currentTurns.map((item) => item.agent.id),
-      mentionsEnabled: !context.discussion,
+      mentionsEnabled: !context.discussion && mentionDepth < this.mentionChainLimit,
     };
     const prompt = buildAgentPrompt(promptContext);
 
@@ -623,9 +632,10 @@ class ChatRoom extends EventEmitter {
   }
 
   // 에이전트가 @이름으로 부르면 그 에이전트가 실제로 이어서 응답합니다.
-  // 자기 자신과 그룹 별칭은 개별 참가자 호출에서 제외합니다.
+  // 자기 자신과 그룹 별칭은 개별 참가자 호출에서 제외하고,
+  // 연쇄 깊이 상한에 닿으면 더 호출하지 않습니다.
   scheduleMentionReplies(agent, text, depth, attachments = [], turnRootId = null, routingAgents = this.agents) {
-    if (this.mentionsMuted) return;
+    if (this.mentionsMuted || depth >= this.mentionChainLimit) return;
     const mentionedIds = parseMentions(text, routingAgents).filter((id) => id !== agent.id);
     const parallelBatch = `handoff-${++this.batchSeq}`;
     let priorityIndex = 0;
@@ -664,8 +674,9 @@ class ChatRoom extends EventEmitter {
     }
     this.discussionActive = true;
 
+    const budget = this.discussionRunBudget;
     this.appendSystem(
-      `자율 토론 시작 · ${pool.map((agent) => `@${agentMention(agent)}`).join(", ")}`
+      `자율 토론 시작 · ${pool.map((agent) => `@${agentMention(agent)}`).join(", ")} · 최대 ${budget}턴`
     );
 
     const generation = this.generation;
@@ -674,12 +685,12 @@ class ChatRoom extends EventEmitter {
     let concluded = false;
     let failed = false;
     try {
-      for (let turn = 1; ; turn += 1) {
+      for (let turn = 1; turn <= budget; turn += 1) {
         if (generation !== this.generation) break;
         if (this.discussionInterrupted) { concluded = true; break; }
         const agent = pool[(turn - 1) % pool.length];
         const outcome = await this.scheduleResponse(agent, {
-          discussion: { turn },
+          discussion: { turn, maxTurns: budget },
         });
         completed += 1;
         if (generation !== this.generation) break;
@@ -696,6 +707,8 @@ class ChatRoom extends EventEmitter {
           this.appendSystem("사용자 개입으로 토론을 여기서 마쳤습니다.");
         } else if (failed) {
           this.appendSystem("참가자 실행이 완료되지 않아 토론을 멈췄습니다.");
+        } else if (!concluded) {
+          this.appendSystem(`토론 실행 예산(${budget}턴)에 도달해 여기서 마쳤습니다.`);
         } else {
           this.appendSystem("참가자들이 합의하거나 결론에 도달해 토론을 마쳤습니다.");
         }
@@ -710,7 +723,7 @@ class ChatRoom extends EventEmitter {
         this.pumpTurnQueue();
       }
     }
-    return { ok: !failed, completed, truncated: false, concluded };
+    return { ok: !failed, completed, truncated: !failed && !concluded && completed >= budget, concluded };
   }
 
   stopAll() {

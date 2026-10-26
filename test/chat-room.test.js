@@ -299,7 +299,9 @@ test("전달받은 작업을 다른 참가자에게 다시 전달할 수 있다"
   await settle(room);
 
   assert.deepEqual(calls.map((call) => call.agentId), ["claude", "agy", "codex"]);
-  assert.ok(calls.every((call) => !/추가 호출할 수 없습니다/.test(call.prompt)));
+  assert.ok(calls.slice(0, 2).every((call) => !/추가 호출할 수 없습니다/.test(call.prompt)));
+  // 사용자 메시지 기준 2단계에서 호출된 참가자는 더 호출할 수 없다고 안내받습니다.
+  assert.match(calls[2].prompt, /추가 호출할 수 없습니다/);
 });
 
 test("턴 상태 이벤트는 동시에 작업 중인 모든 참가자를 공개한다", async () => {
@@ -498,7 +500,7 @@ test("에이전트가 @이름으로 부르면 그 에이전트가 이어서 응�
   assert.equal(agentMessages[1].author, "codex");
 });
 
-test("작업 전달과 결과 보고는 왕복 횟수에 관계없이 이어지고 자기 호출은 무시된다", async () => {
+test("작업 전달과 결과 보고는 사용자 메시지 기준 2단계까지 이어지고 자기 호출은 무시된다", async () => {
   const calls = [];
   const room = new ChatRoom({
     agents: makeAgents(),
@@ -516,9 +518,9 @@ test("작업 전달과 결과 보고는 왕복 횟수에 관계없이 이어지�
   room.sendUserMessage("@claude 시작해");
   await settle(room);
 
-  assert.deepEqual(calls.map((call) => call.agentId), ["claude", "codex", "claude", "codex"]);
+  assert.deepEqual(calls.map((call) => call.agentId), ["claude", "codex", "claude"]);
   assert.match(calls[1].prompt, /그러면 그 참가자가 이어서 답합니다/);
-  assert.match(calls[2].prompt, /그러면 그 참가자가 이어서 답합니다/);
+  assert.match(calls[2].prompt, /추가 호출할 수 없습니다/);
 });
 
 test("코드·이메일·그룹 별칭은 에이전트 답변에서 추가 호출을 만들지 않는다", async () => {
@@ -560,10 +562,10 @@ test("줄 중간 백틱과 공백이 붙은 닫는 펜스 뒤의 실제 멘션�
   }
 });
 
-test("한 작업의 20회 왕복에서도 호출과 첨부가 유지된다", async () => {
+test("연쇄 깊이 상한을 늘리면 한 작업의 20회 왕복에서도 호출과 첨부가 유지된다", async () => {
   const calls = [];
   const attachment = { id: "review", name: "task.txt", kind: "text" };
-  const room = new ChatRoom({ agents: makeAgents(), runAgent: ({ agent, prompt, attachments }) => {
+  const room = new ChatRoom({ agents: makeAgents(), mentionChainLimit: 20, runAgent: ({ agent, prompt, attachments }) => {
     calls.push({ agentId: agent.id, prompt, attachments });
     const next = agent.id === "claude" ? "codex" : "claude";
     return { promise: Promise.resolve({ ok: true, text: calls.length < 20
@@ -581,7 +583,7 @@ test("한 작업의 20회 왕복에서도 호출과 첨부가 유지된다", asy
 test("길게 이어지는 멘션도 사용자 개입 시 즉시 취소하고 다음 호출을 막는다", async () => {
   const calls = [];
   let cancelled = false;
-  const room = new ChatRoom({ agents: makeAgents(), runAgent: ({ agent }) => {
+  const room = new ChatRoom({ agents: makeAgents(), mentionChainLimit: 100, runAgent: ({ agent }) => {
     calls.push(agent.id);
     const next = agent.id === "claude" ? "codex" : "claude";
     if (calls.length === 12) {
@@ -683,7 +685,7 @@ test("자율 토론은 차례로 말하고 결론 신호에서 즉시 끝난다"
     calls.map((call) => call.agentId),
     ["claude", "codex"]
   );
-  assert.match(calls[0].prompt, /자율 토론 1턴/);
+  assert.match(calls[0].prompt, /자율 토론 1\/9턴/);
   assert.equal(result.concluded, true);
   const notices = room.messages.filter((message) => message.authorType === "system");
   assert.match(notices[0].text, /토론 시작/);
@@ -704,10 +706,37 @@ test("모든 참가자가 새 내용 없이 동의/패스하면 토론을 끝낸
   assert.equal(calls.length, 2);
 });
 
-test("토론은 9턴을 넘어도 결론이 나올 때까지 이어진다", async () => {
+test("결론이 나지 않는 토론은 기본 9턴에서 끝내고 예산 도달을 알린다", async () => {
   const calls = [];
   const room = new ChatRoom({
     agents: makeAgents(),
+    runAgent: ({ agent }) => {
+      calls.push(agent.id);
+      // 상한이 빠지면 즉시 응답하는 토론이 이벤트 루프를 점유해 테스트 타임아웃도
+      // 동작하지 않으므로, 넉넉한 호출 수에서 실패로 끊어 멈춤 대신 실패하게 합니다.
+      if (calls.length > 20) {
+        return { promise: Promise.resolve({ ok: false, error: "토론 상한 없음" }), cancel() {} };
+      }
+      return { promise: Promise.resolve({ ok: true, text: "검토 중" }), cancel() {} };
+    },
+  });
+  const result = await room.startDiscussion();
+  await settle(room);
+
+  assert.equal(result.ok, true);
+  assert.equal(result.concluded, false);
+  assert.equal(result.truncated, true);
+  assert.equal(calls.length, 9);
+  const notices = room.messages.filter((message) => message.authorType === "system");
+  assert.match(notices[0].text, /최대 9턴/);
+  assert.match(notices.at(-1).text, /토론 실행 예산\(9턴\)에 도달/);
+});
+
+test("토론 실행 예산을 늘리면 9턴을 넘어 결론이 나올 때까지 이어진다", async () => {
+  const calls = [];
+  const room = new ChatRoom({
+    agents: makeAgents(),
+    discussionRunBudget: 20,
     runAgent: ({ agent }) => {
       calls.push(agent.id);
       return { promise: Promise.resolve({ ok: true, text: calls.length === 15

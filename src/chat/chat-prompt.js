@@ -104,7 +104,7 @@ function buildAgentPrompt({
   }
   if (discussion) {
     lines.push(
-      `- 지금은 자율 토론 ${discussion.turn}턴입니다. 앞선 답변을 검토해 새 근거가 있을 때만 짧게 기여하세요.`
+      `- 지금은 자율 토론 ${discussion.maxTurns ? `${discussion.turn}/${discussion.maxTurns}` : discussion.turn}턴입니다. 앞선 답변을 검토해 새 근거가 있을 때만 짧게 기여하세요.`
     );
     lines.push("- 응답 마지막 줄에 반드시 다음 중 하나만 붙이세요: [[CODEPET_DISCUSSION:CONTINUE]], [[CODEPET_DISCUSSION:AGREE]], [[CODEPET_DISCUSSION:PASS]], [[CODEPET_DISCUSSION:CONCLUDE]].");
     lines.push("- 새 기여는 CONTINUE, 새 내용 없이 동의하면 AGREE, 할 말이 없으면 PASS, 충분한 최종 결론을 제시하면 CONCLUDE를 선택하세요.");
