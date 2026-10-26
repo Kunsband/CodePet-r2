@@ -1126,7 +1126,7 @@ function createChatFeature(options) {
         currentSessionBytes: sessionBytes,
       });
       if (result.ok) {
-        sessionBytes += result.attachment.size;
+        sessionBytes += result.addedBytes;
         pending.set(result.attachment.id, result.attachment);
         attachments.push(publicAttachment(result.attachment));
       } else {
@@ -1157,7 +1157,7 @@ function createChatFeature(options) {
         requireImage: true,
       });
       if (result.ok) {
-        sessionBytes += result.attachment.size;
+        sessionBytes += result.addedBytes;
         pending.set(result.attachment.id, result.attachment);
         attachments.push(publicAttachment(result.attachment));
       } else {
@@ -1228,3 +1228,4 @@ module.exports = {
   attachmentContextLines,
   resolveAgentExecution,
 };
+

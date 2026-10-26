@@ -98,6 +98,53 @@ test("같은 내용은 같은 id로 중복 제거된다", () => {
   assert.equal(fs.readdirSync(attachments).length, 1);
 });
 
+for (const mode of ["file", "buffer"]) {
+  test(`${mode}: 용량 한도에서도 저장된 첨부를 다시 사용할 수 있다`, (t) => {
+    const { root, source, attachments } = makeDirs();
+    t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+    const sourcePath = path.join(source, "image.png");
+    fs.writeFileSync(sourcePath, PNG_BYTES);
+    const options = { attachmentsDir: attachments, maxSessionBytes: PNG_BYTES.length };
+    const attach = (currentSessionBytes, data = PNG_BYTES) => {
+      if (mode === "buffer") return importAttachmentBuffer({
+        ...options, name: "image.png", data, currentSessionBytes, requireImage: true,
+      });
+      fs.writeFileSync(sourcePath, data);
+      return importAttachment({ ...options, sourcePath, currentSessionBytes });
+    };
+
+    const first = attach(0);
+    assert.equal(first.ok, true);
+    const duplicate = attach(PNG_BYTES.length);
+    assert.equal(duplicate.ok, true);
+    assert.equal(first.addedBytes, PNG_BYTES.length);
+    assert.equal(duplicate.addedBytes, 0);
+    assert.equal(duplicate.attachment.fileName, first.attachment.fileName);
+    const different = attach(PNG_BYTES.length, Buffer.concat([PNG_BYTES, Buffer.from([1])]));
+    assert.equal(different.ok, false);
+    assert.match(different.error, /한도/);
+    assert.equal(fs.readdirSync(attachments).length, 1);
+  });
+}
+
+test("한 번에 중복 이미지와 새 이미지를 첨부해도 실제 추가 용량만 센다", (t) => {
+  const { root, attachments } = makeDirs();
+  t.after(() => fs.rmSync(root, { recursive: true, force: true }));
+  const other = Buffer.from(PNG_BYTES);
+  other[other.length - 1] = 1;
+  let sessionBytes = 0;
+  for (const data of [PNG_BYTES, PNG_BYTES, other]) {
+    const result = importAttachmentBuffer({
+      name: "image.png", data, attachmentsDir: attachments, requireImage: true,
+      currentSessionBytes: sessionBytes, maxSessionBytes: PNG_BYTES.length * 2,
+    });
+    assert.equal(result.ok, true);
+    sessionBytes += result.addedBytes ?? result.attachment.size;
+  }
+  assert.equal(sessionBytes, PNG_BYTES.length * 2);
+  assert.equal(fs.readdirSync(attachments).length, 2);
+});
+
 test("확장자를 속인 이미지(.png 안의 텍스트)는 이미지로 취급하지 않는다", () => {
   const { source, attachments } = makeDirs();
   const fake = path.join(source, "fake.png");
@@ -188,3 +235,4 @@ test("텍스트 인라인 읽기는 파일명 검증과 한도를 지킨다", ()
     null
   );
 });
+
