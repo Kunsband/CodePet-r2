@@ -120,7 +120,7 @@ jobs:
           chmod +x "$workdir/appimagetool-x86_64.AppImage"
           rm -f "$appimage" "$appimage.zsync"
           APPIMAGE_EXTRACT_AND_RUN=1 "$workdir/appimagetool-x86_64.AppImage" \
-            -u 'gh-releases-zsync|nokryong|CodePet|latest|CodePet-*-x86_64.AppImage.zsync' \
+            -u 'gh-releases-zsync|Kunsband|CodePet-r2|latest|CodePet-*-x86_64.AppImage.zsync' \
             "$workdir/squashfs-root" "$appimage"
 
           expected_zsync="$appimage.zsync"
@@ -133,7 +133,7 @@ jobs:
           test -s "$expected_zsync"
           update_info="$("$appimage" --appimage-updateinformation)"
           printf 'AppImage update information: %s\n' "$update_info"
-          test "$update_info" = 'gh-releases-zsync|nokryong|CodePet|latest|CodePet-*-x86_64.AppImage.zsync'
+          test "$update_info" = 'gh-releases-zsync|Kunsband|CodePet-r2|latest|CodePet-*-x86_64.AppImage.zsync'
       - name: Preserve the native package
         uses: actions/upload-artifact@v4
         with:

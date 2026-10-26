@@ -1,6 +1,6 @@
-// Public distribution used by README and the AppImage update channel. The
-// development repository is private and cannot serve unauthenticated clients.
-const RELEASE_REPOSITORY = "nokryong/CodePet";
+// This fork checks its own releases so the update icon never points to an
+// upstream build without the fork's patches. Upstream: nokryong/CodePet.
+const RELEASE_REPOSITORY = "Kunsband/CodePet-r2";
 const RELEASE_ROOT = `https://github.com/${RELEASE_REPOSITORY}/releases`;
 const RELEASE_API = `https://api.github.com/repos/${RELEASE_REPOSITORY}/releases/latest`;
 

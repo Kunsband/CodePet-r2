@@ -53,7 +53,7 @@ test("release workflow builds three native runners and uploads all three package
   );
   assert.match(
     releaseWorkflow,
-    /gh-releases-zsync\|nokryong\|CodePet\|latest\|CodePet-\*-x86_64\.AppImage\.zsync/
+    /gh-releases-zsync\|Kunsband\|CodePet-r2\|latest\|CodePet-\*-x86_64\.AppImage\.zsync/
   );
   assert.match(releaseWorkflow, /appimagetool-x86_64\.AppImage/);
   assert.match(releaseWorkflow, /appimagetool\/releases\/download\/1\.9\.1/);
