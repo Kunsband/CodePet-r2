@@ -49,6 +49,12 @@ function redactNamedValues(text) {
         if (char === quote && slashes % slashPeriod === encodedSlashes) break;
         slashes = char === "\\" ? slashes + 1 : 0;
       }
+    } else if (text[start] === "[") {
+      // set-cookie values are often printed as arrays: mask through the closing
+      // bracket on the same line, or to EOL when the array continues below.
+      end = start + 1;
+      while (end < text.length && text[end] !== "]" && text[end] !== "\r" && text[end] !== "\n") end++;
+      if (text[end] === "]") end++;
     } else {
       while (end < text.length && !/[\s,}]/.test(text[end])) end++;
     }

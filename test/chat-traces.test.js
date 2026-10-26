@@ -253,6 +253,25 @@ test("cookie headers are redacted in verbose command output and structured tool 
   assert.match(raw, /HTTP 200/);
 });
 
+test("set-cookie arrays printed as JSON or inspected objects are redacted as a whole", async t => {
+  const { store } = await fixture(t);
+  const collector = await begin(store, "s1", "codex");
+  const parse = createLineParser("codex", event => collector.add(event));
+  const output = [
+    '{"set-cookie":["a=synthetic-h","b=synthetic-i"]}',
+    "{ 'set-cookie': [ 'sid=synthetic-j; Path=/' ] }",
+    "status 200",
+  ].join("\n");
+  parse(JSON.stringify({ type: "item.completed", item: {
+    type: "command_execution", command: "node print-headers.js", aggregated_output: output, exit_code: 0,
+  } }));
+  await parse.flushTraces();
+  const id = await store.save({ collector, status: "completed" });
+  const raw = JSON.stringify(await readAll(store, id));
+  assert.doesNotMatch(raw, /synthetic-/);
+  assert.match(raw, /status 200/);
+});
+
 test("all provider parsers preserve complete tool inputs and outputs without changing UI events", () => {
   const fixtures = [
     ["codex", { type: "item.started", item: { id: "c1", type: "command_execution", command: "npm test" } }, "npm test"],
