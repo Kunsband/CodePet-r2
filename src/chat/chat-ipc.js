@@ -330,7 +330,7 @@ function createChatFeature(options) {
   }
 
   function makeRunAgent(sessionId) {
-    return ({ agent, prompt, promptContext, runId, attachments, emitEvent, autoApprove = false }) => {
+    return ({ agent, prompt, promptContext, runId, attachments, emitEvent, autoApprove = false, agentTriggered = false }) => {
       const meta = store?.readMeta(sessionId);
       const record = participantRecord(meta, agent.id);
       const providerId = agent.providerId || agent.id;
@@ -365,7 +365,8 @@ function createChatFeature(options) {
         chatCwd: store.runtimeChatDir(),
         attachmentsDir,
         outputFile,
-        autoApprove: (meta.permissionMode || "chat") === "workspace-write" && Boolean(config.autoApprove || autoApprove),
+        autoApprove: (meta.permissionMode || "chat") === "workspace-write"
+          && Boolean(autoApprove || (config.autoApprove && !agentTriggered)),
       };
       const invocation = buildAgentInvocation(invocationInput);
       if (!invocation.ok) {
@@ -540,7 +541,7 @@ function createChatFeature(options) {
         const latestMeta = store?.readMeta(sessionId);
         const providerId = payload?.agent?.providerId || payload?.agent?.id;
         const participant = latestMeta?.agents?.[payload?.agent?.id];
-        if (providerId === "codex" && !(latestMeta.permissionMode === "workspace-write" && (participant?.autoApprove || payload.autoApprove))) {
+        if (providerId === "codex" && !(latestMeta.permissionMode === "workspace-write" && (payload.autoApprove || (participant?.autoApprove && !payload.agentTriggered)))) {
           const account = participant?.profileKey ? accountService("codex")?.prepare(participant.profileKey) : null;
           const env = account?.env || options.env || process.env;
           const sourceHome = env.CODEX_HOME || path.join(os.homedir(), ".codex");

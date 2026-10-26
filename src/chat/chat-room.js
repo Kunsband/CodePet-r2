@@ -469,6 +469,10 @@ class ChatRoom extends EventEmitter {
     agent = currentAgent;
 
     const mentionDepth = context.mentionDepth || 0;
+    // 다른 에이전트의 답변 속 @멘션으로 시작된 실행은 사용자가 직접 보낸 지시가 아니므로
+    // 자동 승인을 적용하지 않고, 권한이 필요하면 사용자에게 묻습니다.
+    const agentTriggered = mentionDepth > 0;
+    const autoAllowed = Boolean(agent.autoApprove) && !agentTriggered;
     let broadcast = context.broadcast || null;
     if (broadcast && context.turnRootId) {
       const position = (this.broadcastPositions.get(context.turnRootId) || 0) + 1;
@@ -507,7 +511,7 @@ class ChatRoom extends EventEmitter {
       let run;
       try {
         if (typeof this.prepareAgent === "function") {
-          await this.prepareAgent({ agent, runId });
+          await this.prepareAgent({ agent, runId, autoApprove: autoAllowed || approvedRetry, agentTriggered });
           if (generation !== this.generation) return;
         }
         run = this.runAgent({
@@ -517,7 +521,8 @@ class ChatRoom extends EventEmitter {
           runId,
           attachments: context.attachments || [],
           emitEvent,
-          autoApprove: agent.autoApprove || approvedRetry,
+          autoApprove: autoAllowed || approvedRetry,
+          agentTriggered,
         });
         this.cancels.add(run.cancel);
         result = await run.promise;
@@ -533,7 +538,7 @@ class ChatRoom extends EventEmitter {
       }
       if (generation !== this.generation || result?.cancelled) return;
       emitEvent({ kind: "run-end", ok: Boolean(result?.ok) });
-      if (!result?.approvalRequired || agent.autoApprove || approvedRetry) break;
+      if (!result?.approvalRequired || autoAllowed || approvedRetry) break;
       const approved = await this.requestApproval(agent, result.approval);
       if (generation !== this.generation) return;
       if (!approved) {
@@ -550,13 +555,13 @@ class ChatRoom extends EventEmitter {
     if (!result?.ok) {
       // 진단 기록에 자동 승인/재시도 맥락을 더해 transcript에 함께 저장합니다.
       const diagnostics = result?.diagnostics
-        ? { ...result.diagnostics, autoApprove: Boolean(agent.autoApprove), approvedRetry }
+        ? { ...result.diagnostics, autoApprove: autoAllowed, approvedRetry }
         : null;
       this.appendMessage({
         authorType: "agent",
         author: agent.id,
         text: describeRunFailure(result, {
-          autoApprove: Boolean(agent.autoApprove),
+          autoApprove: autoAllowed,
           approvedRetry,
         }),
         error: true,
