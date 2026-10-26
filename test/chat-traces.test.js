@@ -337,3 +337,53 @@ test("old traces remain readable after years and corrupt files are preserved", a
   assert.equal(page.truncated, true);
   assert.equal(await fs.readFile(path.join(root, "traces", broken), "utf8"), "{broken");
 });
+
+test('cookie arrays ignore quoted brackets and escaped delimiters at every encoding depth', () => {
+  const arrays = [
+    ['a=hello]still-secret', 'b=synthetic-value'],
+    ['a=hello\\"]still-secret', 'b=synthetic-value'],
+    ['a=hello\\\\]still-secret', 'b=synthetic-value'],
+    ['a=[nested]still-secret', 'b=synthetic-value'],
+  ];
+  for (const cookies of arrays) {
+    let input = JSON.stringify({ 'set-cookie': cookies, status: 'kept-output' });
+    for (let depth = 0; depth < 4; depth++, input = JSON.stringify(input)) {
+      const result = safeText(input);
+      assert.doesNotMatch(result, /still-secret|synthetic-value/);
+      assert.match(result, /kept-output/);
+    }
+  }
+  assert.equal(safeText("{'set-cookie':['a=hello\\']still-secret','b=synthetic-value'], 'status':'ok'}"), "{'set-cookie':[REDACTED], 'status':'ok'}");
+  assert.equal(safeText('{"set-cookie":[["a=hello]still-secret"],"b=synthetic-value"],"status":200}'), '{"set-cookie":[REDACTED],"status":200}');
+  assert.equal(safeText('{"set-cookie":["a=hello]still-secret\nnext line'), '{"set-cookie":[REDACTED]\nnext line');
+});
+
+test('quoted bracket arrays and curl inputs are masked before trace persistence', async t => {
+  const { store, root } = await fixture(t);
+  const collector = await begin(store, 's1', 'codex');
+  const parse = createLineParser('codex', event => collector.add(event));
+  parse(JSON.stringify({ type: 'item.completed', item: {
+    type: 'command_execution', command: 'curl -b "sid=synthetic-value" https://example.com',
+    aggregated_output: '{"set-cookie":["a=hello]still-secret","b=synthetic-value"],"status":200}', exit_code: 0,
+  } }));
+  await parse.flushTraces();
+  const id = await store.save({ collector, status: 'completed' });
+  const directory = path.join(root, 'traces', id);
+  for (const file of (await fs.readdir(directory)).filter(file => file.endsWith('.gz'))) {
+    assert.doesNotMatch(gunzipSync(await fs.readFile(path.join(directory, file))).toString(), /synthetic-value|still-secret/);
+  }
+  const events = await readAll(new ChatTraceStore({ root }), id);
+  assert.doesNotMatch(JSON.stringify(events), /synthetic-value|still-secret/);
+  assert.match(JSON.stringify(events), /200/);
+});
+
+test('quote-aware cookie array scanner handles large and repeated incomplete arrays', () => {
+  for (const input of [
+    '{"set-cookie":["a=' + ']'.repeat(2_000_000) + 'synthetic-value","b=still-secret"],"status":200}',
+    '{"set-cookie":["a=]synthetic-value\n'.repeat(20_000),
+  ]) {
+    const started = performance.now();
+    assert.doesNotMatch(safeText(input), /synthetic-value|still-secret/);
+    assert.ok(performance.now() - started < 4000, `${performance.now() - started}ms`);
+  }
+});

@@ -237,3 +237,40 @@ test("모든 진단 텍스트 필드를 빈 문자열이라도 포함한다", ()
     approvedRetry: false,
   });
 });
+
+test('cookie values starting with equals and arbitrarily long token names remain masked', () => {
+  for (const name of ['sid', 'a'.repeat(257), 'a'.repeat(100_000)]) {
+    for (const header of ['Cookie', 'Set-Cookie']) {
+      assert.equal(redactSensitiveText(`${header}: ${name}==synthetic&value`), `${header}: [REDACTED]`);
+    }
+  }
+  for (const value of ['=synthetic&value', '=synthetic?value', '=synthetic(value)', '=synthetic{value}', '=synthetic!value', '=synthetic|value']) {
+    assert.equal(redactSensitiveText('Cookie: sid=' + value), 'Cookie: [REDACTED]');
+  }
+  assert.equal(redactSensitiveText('cookie:e=>e'), 'cookie:e=>e');
+});
+
+test('JWTs after hyphens retain the original word-boundary coverage', () => {
+  const jwt = 'eyJ' + 'a'.repeat(12) + '.eyJ' + 'b'.repeat(12) + '.signature';
+  for (const prefix of ['', '-', 'prefix-', 'prefix--', '(']) {
+    assert.equal(redactSensitiveText(prefix + jwt), prefix + '[REDACTED]');
+  }
+  assert.equal(redactSensitiveText('eyJshort-' + jwt), '[REDACTED]');
+  for (const prefix of ['x', '_', '9']) assert.equal(redactSensitiveText(prefix + jwt), prefix + jwt);
+});
+
+test('restored cookie and JWT coverage stays bounded on adversarial inputs', () => {
+  const jwt = 'eyJ' + 'a'.repeat(12) + '.eyJ' + 'b'.repeat(12) + '.signature';
+  const inputs = [
+    'curl -b "sid=' + 'a'.repeat(2_000_000) + 'synthetic-value" https://example.com',
+    'cookie:'.repeat(100_000) + 'a'.repeat(100_000) + '=synthetic-value',
+    'eyJaaaaaaaaaaaa-'.repeat(100_000) + jwt,
+    'curl https://example.com; cut -b 1-80\n'.repeat(20_000),
+  ];
+  for (const input of inputs) {
+    const started = performance.now();
+    const output = redactSensitiveText(input);
+    assert.doesNotMatch(output, /synthetic-value/);
+    assert.ok(performance.now() - started < 4000, `${performance.now() - started}ms`);
+  }
+});

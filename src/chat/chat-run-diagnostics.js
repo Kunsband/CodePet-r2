@@ -161,6 +161,27 @@ function redactCurlCookies(text) {
   return parts.join("");
 }
 
+// Scan each base64url run once. A '-' remains a valid JWT boundary, without
+// retrying the rest of a long run at every '-eyJ' occurrence.
+function redactJwt(text) {
+  const runs = /[\w-]+/g;
+  const payload = /eyJ[\w-]{10}[\w-]*\.[\w-]*/y;
+  const parts = [];
+  let copied = 0, match;
+  while ((match = runs.exec(text))) {
+    const candidate = /(?:^|-)eyJ/.exec(match[0]);
+    if (!candidate) continue;
+    const start = match.index + candidate.index + (candidate[0][0] === '-' ? 1 : 0);
+    if (runs.lastIndex - start < 13 || text[runs.lastIndex] !== '.') continue;
+    payload.lastIndex = runs.lastIndex + 1;
+    if (!payload.test(text)) continue;
+    parts.push(text.slice(copied, start), '[REDACTED]');
+    copied = runs.lastIndex = payload.lastIndex;
+  }
+  parts.push(text.slice(copied));
+  return parts.join('');
+}
+
 function redactSensitiveText(text) {
   if (typeof text !== "string") {
     return "";
@@ -176,12 +197,19 @@ function redactSensitiveText(text) {
     // Cookie·Set-Cookie 헤더는 "a=1; b=2"처럼 공백이 섞이므로 값 전체를 줄 끝까지 제거한다.
     // 같은 줄에서 HTTP 토큰 문자로 된 이름=값이 이어질 때만 헤더로 보아, 코드의
     // "cookie: string"이나 압축된 JS의 "cookie:function(e){…}", "cookie:e=>…" 같은 표기는 남긴다.
-    // 쿠키 값은 =로 시작할 수 있으므로(sid==…) 화살표 함수의 =>만 제외하고, ==·===는 값 안에
-    // 코드 문자(? , ( ) { } & | ! < >)가 나올 때만 비교식(e==null?…, null==e?…)으로 보아 남긴다.
-    // 이름과 값 확인 길이를 제한하지 않으면 "cookie:"가 반복된 긴 줄에서 처리 시간이 제곱으로 늘어난다.
-    .replace(/(\b(?:set-)?cookie[ \t]*:[ \t]*)(?=[!#$%&'*+.^_`|~0-9A-Za-z-]{1,256}=(?!>|=[^\s;"'\\?,(){}&|!<>]{0,256}[?,(){}&|!<>]))[^\r\n]*/gi, "$1[REDACTED]");
+    // HTTP 토큰에는 콜론이 없어 긴 이름도 cookie: 사이를 다시 훑지 않는다.
+    // == 뒤의 &·? 등도 유효한 쿠키 값이다. 비교식 오탐 예외는 JS 객체의
+    // {cookie:… / ,cookie:… 위치에만 적용하고 실제 헤더 값은 전부 가린다.
+    .replace(/(\b(?:set-)?cookie[ \t]*:[ \t]*)(?=[!#$%&'*+.^_`|~0-9A-Za-z-]+=(?!>))[^\r\n]*/gi,
+      (header, prefix, offset, input) => {
+        const before = input.slice(Math.max(0, offset - 256), offset);
+        const value = header.slice(prefix.length);
+        if (/[{,][ \t]*$/.test(before)
+          && /^[!#$%&'*+.^_`|~0-9A-Za-z-]+==[^\s;"'\\?,(){}&|!<>]{0,256}[?,(){}&|!<>]/.test(value)) return header;
+        return prefix + "[REDACTED]";
+      });
 
-  return redactCurlCookies(withoutHeaders)
+  return redactJwt(redactCurlCookies(withoutHeaders))
     // 알려진 API 키 및 토큰 접두사로 시작하는 값을 제거한다.
     .replace(
       /\b(?:sk-ant-|sk-|ghp_|gho_|xoxb-|xoxp-|AKIA)[A-Za-z0-9._-]+/gi,
@@ -193,9 +221,6 @@ function redactSensitiveText(text) {
       /\b(?:xai-[A-Za-z0-9]{20}[A-Za-z0-9]*|ya29\.[A-Za-z0-9_-]{20}[A-Za-z0-9_-]*|GOCSPX-[A-Za-z0-9_-]{20}[A-Za-z0-9_-]*|AIza[A-Za-z0-9_-]{35}|github_pat_[A-Za-z0-9_]{20}[A-Za-z0-9_]*)/g,
       "[REDACTED]",
     )
-    // OAuth id_token 등 JWT 형식 값을 제거한다. \b는 '-' 뒤에서도 맞아서 "-eyJ"가 반복된
-    // 긴 단어를 시작점마다 끝까지 다시 훑으므로, 단어·'-' 뒤가 아닌 곳에서만 시작한다.
-    .replace(/(?<![\w-])eyJ[\w-]{10}[\w-]*\.eyJ[\w-]{10}[\w-]*\.[\w-]*/g, "[REDACTED]")
     // 민감한 이름을 가진 환경변수 대입식의 값 부분을 제거한다.
     .replace(
       /\b([A-Za-z_][A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Za-z0-9_]*\s*=\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s\r\n]+)/gi,
