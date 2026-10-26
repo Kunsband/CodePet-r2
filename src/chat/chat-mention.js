@@ -1,8 +1,18 @@
 const MENTION_PATTERN = /@([\p{L}\p{N}_-]+)/gu;
 
 function maskNonCallingText(text) {
+  let fenced = false;
   return String(text || "")
-    .replace(/```[\s\S]*?(?:```|$)/g, (match) => " ".repeat(match.length))
+    .split(/(\r?\n)/)
+    .map((line, index) => {
+      if (index % 2) return line;
+      // Match chat-markdown.js's line-based fence rules; retain source offsets.
+      const delimiter = fenced ? /^```\s*$/.test(line) : /^```([A-Za-z0-9_+-]*)\s*$/.test(line);
+      const masked = fenced || delimiter;
+      if (delimiter) fenced = !fenced;
+      return masked ? " ".repeat(line.length) : line;
+    })
+    .join("")
     .replace(/`[^`\r\n]*`/g, (match) => " ".repeat(match.length));
 }
 

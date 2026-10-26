@@ -1,6 +1,7 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
-const { parseMentions, tokenMatchesAlias } = require("../src/chat/chat-mention");
+const { parseMentions, tokenMatchesAlias, maskNonCallingText } = require("../src/chat/chat-mention");
+const { tokenizeBlocks } = require("../src/chat-markdown");
 
 const AGENTS = [
   { id: "claude", aliases: ["claude"] },
@@ -57,8 +58,55 @@ test("멘션이 없으면 빈 배열을 반환한다", () => {
 });
 
 test("코드 블록과 인라인 코드 안의 이름은 실제 멘션으로 보지 않는다", () => {
-  assert.deepEqual(parseMentions("`@codex` 예시와 ```\n@claude 검토\n```", AGENTS), []);
+  assert.deepEqual(parseMentions("`@codex` 예시와\n```\n@claude 검토\n```", AGENTS), []);
   assert.deepEqual(parseMentions("```\n@codex 닫히지 않은 예시", AGENTS), []);
+});
+
+test("코드 안의 백틱 문자열은 펜스를 닫거나 뒤의 실제 멘션을 가리지 않는다", () => {
+  for (const newline of ["\n", "\r\n"]) {
+    for (const code of ['const delimiter = "```";', '```not-a-closing-fence']) {
+      const text = ["```js", code, "@codex", "```", "@claude"].join(newline);
+      assert.deepEqual(parseMentions(text, AGENTS), ["claude"]);
+      assert.deepEqual(parseMentions(["```js", code, "@codex"].join(newline), AGENTS), []);
+    }
+  }
+});
+
+test("줄 중간 백틱은 렌더러처럼 펜스를 시작하지 않는다", () => {
+  for (const text of [
+    "예시 ```x``` 뒤 @claude",
+    "`@codex` 예시와 ```\n@claude 검토\n```",
+    " ```js\n@claude",
+    "```js extra\n@claude",
+  ]) {
+    const visible = tokenizeBlocks(text).filter((block) => block.type === "paragraph")
+      .flatMap((block) => block.lines.flat()).filter((token) => token.type === "mention");
+    assert.deepEqual(visible.map((token) => token.text), ["@claude"]);
+    assert.deepEqual(parseMentions(text, AGENTS), ["claude"], text);
+  }
+});
+
+test("렌더러가 허용하는 펜스 뒤 공백과 줄바꿈을 동일하게 처리한다", () => {
+  for (const newline of ["\n", "\r\n"]) {
+    for (const whitespace of ["", " \t", "\u00a0", "\u2003", "\ufeff"]) {
+      const text = ["```js" + whitespace, "@codex", "```" + whitespace, "@claude"].join(newline);
+      const blocks = tokenizeBlocks(text);
+      assert.deepEqual(blocks.map((block) => block.type), ["fence", "paragraph"]);
+      assert.equal(blocks[0].code, "@codex");
+      assert.deepEqual(blocks[1].lines[0], [{ type: "mention", text: "@claude" }]);
+      assert.deepEqual(parseMentions(text, AGENTS), ["claude"]);
+    }
+  }
+});
+
+test("펜스를 가린 뒤에도 원문 길이와 코드 밖 표기의 위치를 보존한다", () => {
+  const marker = "[[CODEPET_EMOTE:검토완료]]";
+  const text = ['설명 🧪', '```js', '"```" @codex ' + marker, '```\u00a0', '@claude ' + marker].join("\r\n");
+  const masked = maskNonCallingText(text);
+  assert.equal(masked.length, text.length);
+  assert.equal(masked.indexOf("@codex"), -1);
+  assert.equal(masked.indexOf("@claude"), text.indexOf("@claude"));
+  assert.equal(masked.indexOf(marker), text.lastIndexOf(marker));
 });
 
 test("이메일 주소 안의 @는 실제 멘션으로 보지 않는다", () => {

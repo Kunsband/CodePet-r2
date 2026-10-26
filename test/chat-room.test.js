@@ -534,6 +534,32 @@ test("코드·이메일·그룹 별칭은 에이전트 답변에서 추가 호�
   assert.deepEqual(calls.map((call) => call.agentId), ["claude"]);
 });
 
+test("답변의 코드 안에 백틱 문자열이 있어도 예시 멘션으로 다른 에이전트를 호출하지 않는다", async () => {
+  const calls = [];
+  const room = new ChatRoom({
+    agents: makeAgents(),
+    runAgent: fakeRunner({
+      claude: [{ ok: true, text: '```js\nconst delimiter = "```";\n@codex\n```' }],
+    }, calls),
+  });
+  room.sendUserMessage("@claude 예시를 보여줘");
+  await settle(room);
+  assert.deepEqual(calls.map((call) => call.agentId), ["claude"]);
+});
+
+test("줄 중간 백틱과 공백이 붙은 닫는 펜스 뒤의 실제 멘션은 전달한다", async () => {
+  for (const text of ["예시 ```x``` 뒤 @codex", "```js\nx\n```\u00a0\n@codex"]) {
+    const calls = [];
+    const room = new ChatRoom({
+      agents: makeAgents(),
+      runAgent: fakeRunner({ claude: [{ ok: true, text }] }, calls),
+    });
+    room.sendUserMessage("@claude 검토해줘");
+    await settle(room);
+    assert.deepEqual(calls.map((call) => call.agentId), ["claude", "codex"], text);
+  }
+});
+
 test("한 작업의 20회 왕복에서도 호출과 첨부가 유지된다", async () => {
   const calls = [];
   const attachment = { id: "review", name: "task.txt", kind: "text" };
