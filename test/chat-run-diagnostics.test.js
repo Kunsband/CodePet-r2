@@ -78,6 +78,7 @@ test("Cookie·Set-Cookie 헤더는 공백이 섞인 값 전체를 가리고 코�
     "The cookie: it is stored per site.",
     'var x={get:g,cookie:function(e){document.cookie=e},keep:"KEEPME"};',
     "const store = { cookie: (n)=>read(n), other: 1 };",
+    'var a={cookie:e=>e.split(";"),path:"/"};',
     "Remember to set the cookie:",
     "NODE_ENV=production npm start",
   ].join("\n");

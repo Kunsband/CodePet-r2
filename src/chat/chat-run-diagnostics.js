@@ -16,9 +16,9 @@ function redactSensitiveText(text) {
     .replace(/(\bBearer\s+)[^\s,;]+/gi, "$1[REDACTED]")
     // Cookie·Set-Cookie 헤더는 "a=1; b=2"처럼 공백이 섞이므로 값 전체를 줄 끝까지 제거한다.
     // 같은 줄에서 HTTP 토큰 문자로 된 이름=값이 이어질 때만 헤더로 보아, 코드의
-    // "cookie: string"이나 압축된 JS의 "cookie:function(e){…}" 같은 표기는 남긴다.
+    // "cookie: string"이나 압축된 JS의 "cookie:function(e){…}", "cookie:e=>…" 같은 표기는 남긴다.
     // 이름 길이를 제한하지 않으면 "cookie:"가 반복된 긴 줄에서 처리 시간이 제곱으로 늘어난다.
-    .replace(/(\b(?:set-)?cookie[ \t]*:[ \t]*)(?=[!#$%&'*+.^_`|~0-9A-Za-z-]{1,256}=)[^\r\n]*/gi, "$1[REDACTED]")
+    .replace(/(\b(?:set-)?cookie[ \t]*:[ \t]*)(?=[!#$%&'*+.^_`|~0-9A-Za-z-]{1,256}=(?![=>]))[^\r\n]*/gi, "$1[REDACTED]")
     // 알려진 API 키 및 토큰 접두사로 시작하는 값을 제거한다.
     .replace(
       /\b(?:sk-ant-|sk-|ghp_|gho_|xoxb-|xoxp-|AKIA)[A-Za-z0-9._-]+/gi,
