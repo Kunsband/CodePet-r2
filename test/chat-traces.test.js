@@ -271,6 +271,19 @@ test("set-cookie arrays printed as JSON or inspected objects are redacted as a w
   assert.match(raw, /status 200/);
 });
 
+test("unclosed cookie arrays repeated over many lines are redacted in linear time", async t => {
+  const { store } = await fixture(t);
+  const collector = await begin(store, "s1", "codex");
+  const parse = createLineParser("codex", event => collector.add(event));
+  const started = Date.now();
+  parse(JSON.stringify({ type: "item.completed", item: {
+    type: "command_execution", command: "cat dump.txt", aggregated_output: '"cookie":[\n'.repeat(450_000), exit_code: 0,
+  } }));
+  await parse.flushTraces();
+  // 닫는 ]를 여러 줄 앞까지 찾던 방식은 이 입력에 10초 가까이 걸렸습니다.
+  assert.ok(Date.now() - started < 4000, `${Date.now() - started}ms`);
+});
+
 test("all provider parsers preserve complete tool inputs and outputs without changing UI events", () => {
   const fixtures = [
     ["codex", { type: "item.started", item: { id: "c1", type: "command_execution", command: "npm test" } }, "npm test"],
