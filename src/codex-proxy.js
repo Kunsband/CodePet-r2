@@ -198,10 +198,27 @@ class CodexProxy {
     return Boolean(this.server && this.server.listening);
   }
 
+  // 프록시는 저장 계정의 토큰을 붙여 중계하므로 Codex 외의 호출자는 거부합니다.
+  // - Host가 루프백 주소가 아니면 DNS 리바인딩으로 들어온 웹페이지 요청입니다.
+  // - 웹 Origin이 붙은 요청은 브라우저 페이지가 보낸 것입니다. WebSocket은 CORS로
+  //   막히지 않으므로 여기서 거부해야 합니다. Codex CLI·앱은 웹 Origin을 보내지 않습니다.
+  isTrustedClient(request) {
+    const host = String(request.headers.host || "").toLowerCase();
+    if (host !== `127.0.0.1:${this.port}` && host !== `localhost:${this.port}`) return false;
+    const origin = String(request.headers.origin || "").toLowerCase();
+    return !(origin === "null" || origin.startsWith("http://") || origin.startsWith("https://"));
+  }
+
   async start() {
     if (this.running) return this.port;
 
     const server = http.createServer((request, response) => {
+      if (!this.isTrustedClient(request)) {
+        this.log(`proxy rejected request from host=${request.headers.host || "-"} origin=${request.headers.origin || "-"}`);
+        response.writeHead(403, { "content-type": "application/json" });
+        response.end('{"error":{"message":"codepet proxy: forbidden client"}}');
+        return;
+      }
       this.handleRequest(request, response).catch((error) => {
         this.log(`proxy request failed: ${error.message || error}`);
         if (!response.headersSent) {
@@ -212,6 +229,11 @@ class CodexProxy {
     });
     // Codex 데스크톱 앱은 responses를 WebSocket으로 보냅니다. 업그레이드 요청은 원시 터널로 중계합니다.
     server.on("upgrade", (request, socket, head) => {
+      if (!this.isTrustedClient(request)) {
+        this.log(`proxy rejected websocket from host=${request.headers.host || "-"} origin=${request.headers.origin || "-"}`);
+        socket.end("HTTP/1.1 403 Forbidden\r\nConnection: close\r\nContent-Length: 0\r\n\r\n");
+        return;
+      }
       this.handleUpgrade(request, socket, head).catch((error) => {
         this.log(`proxy websocket failed: ${error.message || error}`);
         socket.destroy();
