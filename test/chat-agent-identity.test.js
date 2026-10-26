@@ -3,6 +3,7 @@ const assert = require("node:assert/strict");
 const { identityPatch, GROUP_ALIASES } = require("../src/chat/chat-agent-identity");
 const { roomAgentFromCapability } = require("../src/chat/chat-agents");
 const { parseMentions } = require("../src/chat/chat-mention");
+const { tokenizeBlocks } = require("../src/chat-markdown");
 
 const agents = [
   { id: "codex", aliases: ["민", "codex"] },
@@ -41,6 +42,22 @@ test("Korean custom handles use the longest match and preserve particles, groups
   const roster = [...agents, { id: "grok", aliases: ["모두미", "grok"] }];
   assert.deepEqual(parseMentions("@모두미야", roster, GROUP_ALIASES), ["grok"]);
   assert.deepEqual(parseMentions("@모두", roster, GROUP_ALIASES), roster.map((agent) => agent.id));
-  assert.deepEqual(parseMentions("`@민수` ```\n@민\n``` mail@민수.test", agents), []);
+  assert.deepEqual(parseMentions("`@민수`\n```\n@민\n```\nmail@민수.test", agents), []);
   assert.deepEqual(parseMentions("@민수".normalize("NFD"), agents), ["claude"]);
+});
+
+test("custom-handle code exclusions agree with the renderer's fence boundaries", () => {
+  for (const newline of ["\n", "\r\n"]) {
+    const original = ["`@민수` ```", "@민", "``` mail@민수.test"].join(newline);
+    const renderedOriginal = tokenizeBlocks(original);
+    assert.deepEqual(renderedOriginal.map((block) => block.type), ["paragraph"]);
+    assert.deepEqual(renderedOriginal[0].lines[1], [{ type: "mention", text: "@민" }]);
+    assert.deepEqual(parseMentions(original, agents), ["codex"]);
+
+    const fenced = ["`@민수`", "```", "@민", "```", "mail@민수.test"].join(newline);
+    const renderedFenced = tokenizeBlocks(fenced);
+    assert.deepEqual(renderedFenced.map((block) => block.type), ["paragraph", "fence", "paragraph"]);
+    assert.equal(renderedFenced[1].code, "@민");
+    assert.deepEqual(parseMentions(fenced, agents), []);
+  }
 });
