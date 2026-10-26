@@ -241,7 +241,6 @@ test("cookie headers are redacted in verbose command output and structured tool 
   const parse = createLineParser("claude", event => collector.add(event));
   parse(JSON.stringify({ type: "assistant", message: { content: [
     { type: "tool_use", name: "WebFetch", input: { url: "https://example.com", headers: { Cookie: "a=synthetic-a; b=synthetic-b" } } },
-    { type: "tool_use", name: "Bash", input: { command: 'curl -b "sid=synthetic-f; csrf=synthetic-g" https://example.com/api' } },
   ] } }));
   parse(JSON.stringify({ type: "user", message: { content: [{ type: "tool_result", content: [
     { type: "text", text: "> Cookie: session=synthetic-c; other=synthetic-d\n< set-cookie: sid=synthetic-e; Path=/\nHTTP 200" },

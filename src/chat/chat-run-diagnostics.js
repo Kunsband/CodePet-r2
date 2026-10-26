@@ -19,12 +19,6 @@ function redactSensitiveText(text) {
     // "cookie: string"이나 압축된 JS의 "cookie:function(e){…}" 같은 표기는 남긴다.
     // 이름 길이를 제한하지 않으면 "cookie:"가 반복된 긴 줄에서 처리 시간이 제곱으로 늘어난다.
     .replace(/(\b(?:set-)?cookie[ \t]*:[ \t]*)(?=[!#$%&'*+.^_`|~0-9A-Za-z-]{1,256}=)[^\r\n]*/gi, "$1[REDACTED]")
-    // curl 쿠키 옵션 값을 제거한다. --cookie는 curl 전용 표기라 어디서나 보고,
-    // -b는 다른 도구의 옵션과 겹치므로 같은 줄의 curl 뒤에서만 본다. -sSb처럼 붙여 쓴
-    // 짧은 옵션도 b가 마지막이면 쿠키 값을 받는다.
-    .replace(/(--cookie(?:\s+|=))(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s"']+)/gi, "$1[REDACTED]")
-    .replace(/\bcurl\b[^\r\n]*/gi, (command) =>
-      command.replace(/(\s-[A-Za-z]*b\s+)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s"']+)/g, "$1[REDACTED]"))
     // 알려진 API 키 및 토큰 접두사로 시작하는 값을 제거한다.
     .replace(
       /\b(?:sk-ant-|sk-|ghp_|gho_|xoxb-|xoxp-|AKIA)[A-Za-z0-9._-]+/gi,
