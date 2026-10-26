@@ -15,9 +15,10 @@ function redactSensitiveText(text) {
     .replace(/(\bAuthorization\s*:\s*)[^\r\n]*/gi, "$1[REDACTED]")
     .replace(/(\bBearer\s+)[^\s,;]+/gi, "$1[REDACTED]")
     // Cookie·Set-Cookie 헤더는 "a=1; b=2"처럼 공백이 섞이므로 값 전체를 줄 끝까지 제거한다.
-    // 이름=값 형태가 이어질 때만 헤더로 보고, 코드의 "cookie: string" 같은 표기는 남긴다.
+    // 같은 줄에서 HTTP 토큰 문자로 된 이름=값이 이어질 때만 헤더로 보아, 코드의
+    // "cookie: string"이나 압축된 JS의 "cookie:function(e){…}" 같은 표기는 남긴다.
     // 이름 길이를 제한하지 않으면 "cookie:"가 반복된 긴 줄에서 처리 시간이 제곱으로 늘어난다.
-    .replace(/(\b(?:set-)?cookie\s*:\s*)(?=[^\s;,=]{1,256}=)[^\r\n]*/gi, "$1[REDACTED]")
+    .replace(/(\b(?:set-)?cookie[ \t]*:[ \t]*)(?=[!#$%&'*+.^_`|~0-9A-Za-z-]{1,256}=)[^\r\n]*/gi, "$1[REDACTED]")
     // curl 쿠키 옵션 값을 제거한다. --cookie는 curl 전용 표기라 어디서나 보고,
     // -b는 다른 도구의 옵션과 겹치므로 같은 줄의 curl 뒤에서만 본다. -sSb처럼 붙여 쓴
     // 짧은 옵션도 b가 마지막이면 쿠키 값을 받는다.
