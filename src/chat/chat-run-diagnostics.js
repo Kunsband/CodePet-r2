@@ -35,8 +35,9 @@ function redactSensitiveText(text) {
       /\b(?:xai-[A-Za-z0-9]{20}[A-Za-z0-9]*|ya29\.[A-Za-z0-9_-]{20}[A-Za-z0-9_-]*|GOCSPX-[A-Za-z0-9_-]{20}[A-Za-z0-9_-]*|AIza[A-Za-z0-9_-]{35}|github_pat_[A-Za-z0-9_]{20}[A-Za-z0-9_]*)/g,
       "[REDACTED]",
     )
-    // OAuth id_token 등 JWT 형식 값을 제거한다.
-    .replace(/\beyJ[\w-]{10}[\w-]*\.eyJ[\w-]{10}[\w-]*\.[\w-]*/g, "[REDACTED]")
+    // OAuth id_token 등 JWT 형식 값을 제거한다. \b는 '-' 뒤에서도 맞아서 "-eyJ"가 반복된
+    // 긴 단어를 시작점마다 끝까지 다시 훑으므로, 단어·'-' 뒤가 아닌 곳에서만 시작한다.
+    .replace(/(?<![\w-])eyJ[\w-]{10}[\w-]*\.eyJ[\w-]{10}[\w-]*\.[\w-]*/g, "[REDACTED]")
     // 민감한 이름을 가진 환경변수 대입식의 값 부분을 제거한다.
     .replace(
       /\b([A-Za-z_][A-Za-z0-9_]*(?:KEY|TOKEN|SECRET|PASSWORD|CREDENTIAL)[A-Za-z0-9_]*\s*=\s*)(?:"[^"\r\n]*"|'[^'\r\n]*'|[^\s\r\n]+)/gi,

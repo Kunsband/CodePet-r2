@@ -99,9 +99,16 @@ test("curl 쿠키 옵션 값은 가리고 다른 도구의 -b 옵션과 쿠키 �
 });
 
 test("cookie: 가 반복되는 긴 줄도 선형 시간 안에 처리한다", () => {
-  // 이름 길이 제한이 없으면 28만 자 입력에 수십 초가 걸립니다.
+  // 이름 길이 제한이 없으면 28만 자 입력에 15초 넘게 걸립니다.
   const started = Date.now();
   redactSensitiveText("cookie:".repeat(40_000));
+  assert.ok(Date.now() - started < 2000, `${Date.now() - started}ms`);
+});
+
+test("'-'로 이어진 eyJ가 반복되는 긴 단어도 선형 시간 안에 처리한다", () => {
+  // \b로 시작하면 51만 자 입력에 20초 넘게 걸립니다.
+  const started = Date.now();
+  redactSensitiveText("eyJaaaaaaaaaaaa-".repeat(32_000));
   assert.ok(Date.now() - started < 2000, `${Date.now() - started}ms`);
 });
 
