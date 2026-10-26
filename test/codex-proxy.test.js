@@ -408,7 +408,7 @@ test("계정 전환은 기존 WebSocket만 끊고 재연결 handshake에 새 계
   const connectTunnel = () => new Promise((resolve, reject) => {
     const socket = net.connect(proxyPort, "127.0.0.1", () => {
       socket.write(
-        "GET /v1/responses HTTP/1.1\r\nHost: codepet\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"
+        `GET /v1/responses HTTP/1.1\r\nHost: 127.0.0.1:${proxyPort}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`
       );
     });
     const timeout = setTimeout(() => {
@@ -531,7 +531,7 @@ test("WebSocket 핸드셰이크 중 upstream이 닫으면 hang하지 않고 다�
     const status = await new Promise((resolve, reject) => {
       const socket = net.connect(proxyPort, "127.0.0.1", () => {
         socket.write(
-          "GET /v1/responses HTTP/1.1\r\nHost: x\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n"
+          `GET /v1/responses HTTP/1.1\r\nHost: 127.0.0.1:${proxyPort}\r\nConnection: Upgrade\r\nUpgrade: websocket\r\n\r\n`
         );
       });
       let data = "";
@@ -546,6 +546,104 @@ test("WebSocket 핸드셰이크 중 upstream이 닫으면 hang하지 않고 다�
       setTimeout(() => reject(new Error("hang: no response")), 4000);
     });
     assert.match(status, /101/);
+  } finally {
+    proxy.stop();
+    upstream.close();
+  }
+});
+
+function rawRequest(port, lines) {
+  return new Promise((resolve, reject) => {
+    const socket = net.connect(port, "127.0.0.1", () => socket.write([...lines, "", ""].join("\r\n")));
+    let data = "";
+    socket.on("data", (chunk) => {
+      data += chunk;
+      if (data.includes("\r\n")) {
+        socket.destroy();
+        resolve(data.split("\r\n")[0]);
+      }
+    });
+    socket.once("error", reject);
+    setTimeout(() => reject(new Error("raw request timeout")), 4000);
+  });
+}
+
+test("루프백이 아닌 Host나 웹 Origin으로 들어온 요청은 토큰을 붙이지 않고 거부한다", async () => {
+  let upstreamHits = 0;
+  const upstream = await startUpstream((request, response) => {
+    upstreamHits += 1;
+    response.writeHead(200);
+    response.end("{}");
+  });
+  upstream.on("upgrade", (request, socket) => {
+    upstreamHits += 1;
+    socket.end("HTTP/1.1 101 Switching Protocols\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\r\n");
+  });
+  const proxy = poolProxy({
+    upstreamPort: upstream.address().port,
+    accounts: [{ key: "a", label: "A", authPath: "token-a" }],
+    port: 19241,
+  });
+  const proxyPort = await proxy.start();
+  const upgrade = ["Connection: Upgrade", "Upgrade: websocket", "Sec-WebSocket-Key: dGVzdA==", "Sec-WebSocket-Version: 13"];
+
+  try {
+    // DNS 리바인딩: 브라우저는 공격자 도메인을 Host로 보냅니다.
+    assert.match(await rawRequest(proxyPort, [
+      "POST /v1/responses HTTP/1.1", "Host: attacker.example:" + proxyPort, "Content-Length: 0",
+    ]), /403/);
+    // 웹페이지의 WebSocket은 CORS를 받지 않으므로 Origin으로 거부합니다.
+    assert.match(await rawRequest(proxyPort, [
+      "GET /v1/responses HTTP/1.1", `Host: 127.0.0.1:${proxyPort}`, "Origin: https://attacker.example", ...upgrade,
+    ]), /403/);
+    assert.match(await rawRequest(proxyPort, [
+      "GET /v1/responses HTTP/1.1", `Host: 127.0.0.1:${proxyPort}`, "Origin: null", ...upgrade,
+    ]), /403/);
+    assert.equal(upstreamHits, 0);
+
+    // Codex처럼 Origin 없이 루프백 Host로 오는 요청은 그대로 중계합니다.
+    assert.match(await rawRequest(proxyPort, [
+      "POST /v1/responses HTTP/1.1", `Host: localhost:${proxyPort}`, "Content-Length: 0",
+    ]), /200/);
+    assert.equal(upstreamHits, 1);
+  } finally {
+    proxy.stop();
+    upstream.close();
+  }
+});
+
+test("Origin 없이 Sec-Fetch-Site만 붙는 웹페이지의 교차 사이트 GET도 토큰을 붙이지 않고 거부한다", async () => {
+  let upstreamHits = 0;
+  const upstream = await startUpstream((request, response) => {
+    upstreamHits += 1;
+    response.writeHead(200);
+    response.end("{}");
+  });
+  const proxy = poolProxy({
+    upstreamPort: upstream.address().port,
+    accounts: [{ key: "a", label: "A", authPath: "token-a" }],
+    port: 19243,
+  });
+  const proxyPort = await proxy.start();
+
+  try {
+    // <img src> / fetch(url, {mode: "no-cors"})는 GET이라 Origin이 없고 Sec-Fetch-Site만 옵니다. (Chromium 실측)
+    for (const site of ["cross-site", "same-site"]) {
+      assert.match(await rawRequest(proxyPort, [
+        "GET /v1/models HTTP/1.1", `Host: 127.0.0.1:${proxyPort}`,
+        `Sec-Fetch-Site: ${site}`, "Sec-Fetch-Mode: no-cors", "Sec-Fetch-Dest: image",
+      ]), /403/);
+    }
+    assert.equal(upstreamHits, 0);
+
+    // 사용자가 직접 연 요청(none)과 Sec-Fetch 헤더가 없는 Codex 요청은 그대로 중계합니다.
+    assert.match(await rawRequest(proxyPort, [
+      "GET /v1/models HTTP/1.1", `Host: 127.0.0.1:${proxyPort}`, "Sec-Fetch-Site: none",
+    ]), /200/);
+    assert.match(await rawRequest(proxyPort, [
+      "GET /v1/models HTTP/1.1", `Host: 127.0.0.1:${proxyPort}`,
+    ]), /200/);
+    assert.equal(upstreamHits, 2);
   } finally {
     proxy.stop();
     upstream.close();
