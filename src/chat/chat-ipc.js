@@ -751,6 +751,7 @@ function createChatFeature(options) {
       "chat:sessions:delete",
       wrap(async ({ sessionId }) => {
         requireSession(sessionId);
+        if (store.readOnly || store.readMeta(sessionId)?.readOnly) throw new Error("읽기 전용 저장소입니다.");
         const room = rooms.get(sessionId);
         if (room) {
           room.stopAllSilently();
@@ -1228,4 +1229,3 @@ module.exports = {
   attachmentContextLines,
   resolveAgentExecution,
 };
-
