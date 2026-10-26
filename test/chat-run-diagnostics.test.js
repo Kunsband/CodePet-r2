@@ -98,6 +98,13 @@ test("curl 쿠키 옵션 값은 가리고 다른 도구의 -b 옵션과 쿠키 �
   assert.equal(redactSensitiveText(unrelated), unrelated);
 });
 
+test("cookie: 가 반복되는 긴 줄도 선형 시간 안에 처리한다", () => {
+  // 이름 길이 제한이 없으면 28만 자 입력에 수십 초가 걸립니다.
+  const started = Date.now();
+  redactSensitiveText("cookie:".repeat(40_000));
+  assert.ok(Date.now() - started < 2000, `${Date.now() - started}ms`);
+});
+
 test("토큰 접두사로 시작하는 수백만 자 출력도 예외 없이 처리한다", () => {
   // base64url로 인코딩한 큰 JSON 등은 eyJ로 시작하는 긴 단어가 됩니다.
   const tail = "a".repeat(10_000_000);
