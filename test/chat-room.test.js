@@ -999,6 +999,66 @@ test("자동 승인 상태에서 권한 요청이 반환되면 상세 원인을 
   assert.match(failure.text, /샌드박스 실행 차단/);
 });
 
+test("다른 에이전트의 @멘션으로 시작된 실행은 자동 승인 대신 사용자에게 권한을 묻는다", async () => {
+  const agents = makeAgents().map((agent) =>
+    agent.id === "codex" ? { ...agent, autoApprove: true } : agent
+  );
+  const calls = [];
+  const prepared = [];
+  const approvals = [];
+  const room = new ChatRoom({
+    agents,
+    prepareAgent: ({ agent, autoApprove, agentTriggered }) => {
+      prepared.push({ agentId: agent.id, autoApprove, agentTriggered });
+    },
+    runAgent: ({ agent, autoApprove, agentTriggered }) => {
+      calls.push({ agentId: agent.id, autoApprove, agentTriggered });
+      if (agent.id === "claude") {
+        return { promise: Promise.resolve({ ok: true, text: "@codex 이 명령도 실행해" }), cancel: () => {} };
+      }
+      return {
+        promise: Promise.resolve(autoApprove
+          ? { ok: true, text: "실행 완료" }
+          : { ok: false, approvalRequired: true, approval: { summary: "명령 권한" } }),
+        cancel: () => {},
+      };
+    },
+  });
+  room.on("approval-request", ({ agentId, approvalId }) => {
+    approvals.push(agentId);
+    room.resolveApproval(approvalId, "approve");
+  });
+  room.sendUserMessage("@claude 확인해줘");
+  await settle(room);
+
+  assert.deepEqual(calls, [
+    { agentId: "claude", autoApprove: false, agentTriggered: false },
+    { agentId: "codex", autoApprove: false, agentTriggered: true },
+    { agentId: "codex", autoApprove: true, agentTriggered: true },
+  ]);
+  assert.deepEqual(prepared.map((item) => item.autoApprove), [false, false, true]);
+  assert.deepEqual(approvals, ["codex"]);
+  assert.equal(room.messages.at(-1).text, "실행 완료");
+});
+
+test("사용자가 직접 부른 실행은 기존처럼 자동 승인을 적용한다", async () => {
+  const agents = makeAgents().map((agent) =>
+    agent.id === "codex" ? { ...agent, autoApprove: true } : agent
+  );
+  const calls = [];
+  const room = new ChatRoom({
+    agents,
+    runAgent: ({ autoApprove, agentTriggered }) => {
+      calls.push({ autoApprove, agentTriggered });
+      return { promise: Promise.resolve({ ok: true, text: "완료" }), cancel: () => {} };
+    },
+  });
+  room.sendUserMessage("@codex 실행해줘");
+  await settle(room);
+
+  assert.deepEqual(calls, [{ autoApprove: true, agentTriggered: false }]);
+});
+
 test("권한 요청을 거부하면 기존 문구를 유지한다", async () => {
   const calls = [];
   const room = new ChatRoom({
