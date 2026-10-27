@@ -15,7 +15,9 @@ function rootIdentity(root) {
 // Reconcile periodically because filesystem notifications can be lost. Unsupported
 // or unavailable watches retain the original full-scan polling behavior.
 class LogFileIndex {
-  constructor({ scan, watch = fs.watch, now = Date.now, reconcileMs = 60000 }) {
+  // Fork: Windows may not report appends to a file another process keeps open (Codex keeps its
+  // rollout file open), so reconcile every 5s instead of 60s to avoid minute-long status delays.
+  constructor({ scan, watch = fs.watch, now = Date.now, reconcileMs = 5000 }) {
     this.scan = scan;
     this.watch = watch;
     this.now = now;
