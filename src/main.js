@@ -61,6 +61,7 @@ const {
   parseGrokModels,
 } = require("./providers/provider-capabilities");
 const { createChatFeature } = require("./chat/chat-ipc");
+const { createLiveFeature } = require("./live/live-feature");
 const { buildWindowsCodexLaunchScript } = require("./codex-desktop-launch");
 const { AppUpdateChecker, registerUpdateIpc } = require("./app-updates");
 const { AppUpdateInstaller, acknowledgeUpdateStartup } = require("./app-update-installer");
@@ -484,6 +485,13 @@ const BUBBLE_CONFIG = Object.freeze({
 
 let petWindow = null;
 let settingsWindow = null;
+const liveFeature = createLiveFeature({
+  electron: { BrowserWindow, ipcMain, powerMonitor },
+  root: path.join(os.homedir(), ".codepet", "live"),
+  getAccount: () => codexAccountSwitcher.getCurrentAccountSummary(),
+  getAppearance: () => getAppearancePayload(),
+  onWindowReady: () => sendAppearanceToWindows(),
+});
 const grokDockerRuntime = new GrokDockerRuntime();
 let chatActivityState = null;
 // 채팅 기능은 창·세션·IPC·프로세스 실행을 chat/chat-ipc.js가 조립합니다.
@@ -2081,6 +2089,10 @@ function buildAppMenu() {
       label: "에이전트 채팅방…",
       click: openChatWindow,
     },
+    {
+      label: "Live 음성 대화…",
+      click: () => liveFeature.openWindow(),
+    },
     { type: "separator" },
     {
       label: "CodePet 보이기",
@@ -3593,6 +3605,7 @@ function registerIpcHandlers() {
   });
 
   chatFeature.registerIpcHandlers();
+  liveFeature.registerIpcHandlers();
 }
 
 // 앱 수명주기 진입점입니다.
@@ -3638,6 +3651,7 @@ if (!relaunchingForX11) app.whenReady().then(() => {
   if (process.argv.includes("--chat")) {
     openChatWindow();
   }
+  if (process.argv.includes("--live")) liveFeature.openWindow();
   if (process.argv.includes("--usage")) usageWindows.togglePopup();
   // 사용량 풍선은 수동 호출이라 문제가 없지만, 대화 말풍선은 watcher가 시작되지 않으면 절대 뜨지 않습니다.
   // 그래서 말풍선 renderer 로드 여부와 무관하게 감시를 바로 시작하고, 표시 데이터는 showBubble()에서 큐잉합니다.
@@ -3660,6 +3674,7 @@ app.on("before-quit", () => {
   usageWindows?.dispose();
   teardownCodexProxyOnQuit();
   chatFeature.shutdown();
+  liveFeature.shutdown();
 });
 
 app.on("window-all-closed", () => {
@@ -3705,6 +3720,7 @@ function sendAppearanceToWindows() {
   if (chatWindow) {
     chatWindow.webContents.send("appearance:update", payload);
   }
+  liveFeature.getWindow()?.webContents.send("appearance:update", payload);
 }
 
 function codexAccountRows() {

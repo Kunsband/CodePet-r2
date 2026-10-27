@@ -64,6 +64,14 @@ Use **＋**, drag and drop, or paste a screenshot. Limits are **20 MiB per file*
 
 Attachments are copied into the session. Images can be delivered to Codex and, with read permission, Claude. AGY and Grok image delivery is not supported; undelivered attachments are marked on the response. Executable files are rejected.
 
+## Live voice conversation
+
+Right-click the pet or tray icon and choose **Live 음성 대화…**. Sign in to the installed Codex CLI with a ChatGPT account, then press Start in Live. Use the microphone button to mute, type into the message box during a call, or end the call with the stop button. Closing the window also releases the microphone.
+
+Conversation models and voices are loaded from the signed-in Codex runtime. Refresh the list in voice settings after ending a call. The voice model uses the server default; its name is shown only when the connection supplies it. Codex currently exposes no selectable language catalog, so Live follows the language you speak.
+
+Live shares the Settings and agent-chat theme. Its window can be resized, with the character capped at 200 pixels. Work mode replaces the character with an animated orb. Live keeps its Codex conversation separate from other chats; permission-dependent workspace work belongs in the agent chat.
+
 ## Account switching
 
 | Service | Behavior |
