@@ -37,7 +37,8 @@ test("an explicit native-taskbar preference is preserved independently", () => {
   }
 });
 
-test("a native taskbar click opens one quota popup with all signed-in providers; startup opens none", () => {
+test("a native taskbar click opens one quota popup, releases it after hiding, and can reopen it", (t) => {
+  t.mock.timers.enable({ apis: ["setTimeout"] });
   const windows = [];
   class FakeWindow extends EventEmitter {
     constructor(options) {
@@ -47,13 +48,13 @@ test("a native taskbar click opens one quota popup with all signed-in providers;
       this.webContents.send = (channel, snapshot) => { this.lastUpdate = { channel, snapshot }; };
     }
     loadFile() {}
-    isDestroyed() { return false; }
+    isDestroyed() { return Boolean(this.destroyed); }
     isVisible() { return this.visible; }
-    show() { this.visible = true; }
-    hide() { this.visible = false; }
+    show() { this.visible = true; this.emit("show"); }
+    hide() { this.visible = false; this.emit("hide"); }
     focus() {}
     setBounds(bounds) { this.bounds = bounds; }
-    destroy() { this.emit("closed"); }
+    destroy() { this.destroyed = true; this.emit("closed"); }
   }
   const snapshot = { providers: ["Codex", "AGY", "Claude"].map((label) => ({ label, connected: true, gauges: [{ usedPercent: 23 }] })) };
   const monitor = new EventEmitter();
@@ -85,5 +86,11 @@ test("a native taskbar click opens one quota popup with all signed-in providers;
   click({ x: 1447, y: 1032, width: 227, height: 48 });
   assert.equal(windows[0].visible, false);
   assert.equal(windows.length, 1);
+  t.mock.timers.tick(30000);
+  assert.equal(windows[0].destroyed, true);
+  click({ x: 1447, y: 1032, width: 227, height: 48 });
+  assert.equal(windows.length, 2);
+  windows[1].emit("ready-to-show");
+  assert.equal(windows[1].visible, true);
   feature.dispose();
 });

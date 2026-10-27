@@ -61,6 +61,36 @@ function normalizeAgyQuota(data) {
   );
 }
 
+function normalizeAgyGeminiQuota(data) {
+  const models = Object.entries(data?.models || {}).filter(([id, model]) =>
+    model && !model.isInternal && (/^gemini(?:-|$)/i.test(id) || /^gemini\b/i.test(model.displayName || ""))
+  );
+  const tieredIds = new Set(Object.values(data?.tieredModelIds || {})
+    .flatMap((ids) => Array.isArray(ids) ? ids.filter((id) => typeof id === "string") : []));
+  const tiered = models.filter(([id]) => tieredIds.has(id));
+  // Prefer the current tier's model IDs over legacy aliases. Older responses
+  // without this catalog can still expose named, public Gemini models.
+  const candidates = tiered.length ? tiered : models.filter(([, model]) => model.displayName);
+  const gauges = candidates.flatMap(([id, model]) => {
+    const quota = model.quotaInfo || model.quota_info;
+    const raw = quota?.remainingFraction ?? quota?.remaining_fraction;
+    if (!["number", "string"].includes(typeof raw) || String(raw).trim() === "") return [];
+    const remaining = Number(raw);
+    if (!Number.isFinite(remaining)) return [];
+    return [{ label: model.displayName || id,
+      usedPercent: clampPercent((1 - remaining) * 100),
+      resetText: quota.resetTime || quota.reset_time || "" }];
+  });
+  if (!gauges.length) return [];
+  const first = gauges[0];
+  // Shared Gemini quotas need one row. Preserve distinct balances/reset times
+  // when the backend returns different model limits.
+  if (gauges.every((gauge) => gauge.usedPercent === first.usedPercent && gauge.resetText === first.resetText)) {
+    return [{ ...first, label: "Gemini" }];
+  }
+  return [...new Map(gauges.map((gauge) => [JSON.stringify(gauge), gauge])).values()];
+}
+
 function normalizeClaudeUsage(data) {
   const windows = [
     ["5시간", data?.five_hour],
@@ -252,11 +282,24 @@ async function fetchAntigravityUsage({ credential, force = false, credentialStor
         body: JSON.stringify({ project }),
       }
     );
+    const gauges = normalizeAgyQuota(quota);
+    if (!gauges.some((gauge) => /\bgemini\b/i.test(gauge.label))) {
+      try {
+        const models = await json("https://daily-cloudcode-pa.googleapis.com/v1internal:fetchAvailableModels", {
+          method: "POST", headers, body: JSON.stringify({ project }),
+        });
+        gauges.push(...normalizeAgyGeminiQuota(models));
+      } catch (error) {
+        // Let the existing credential handler retry an expired token. Other
+        // optional-model failures must not discard the working summary quota.
+        if (error.status === 401) throw error;
+      }
+    }
     return {
       provider: "agy",
       email: identity.email || null,
       plan: tierLabel(assist),
-      gauges: normalizeAgyQuota(quota),
+      gauges,
     };
   }, { store: credentialStore }), { force });
 }
@@ -279,6 +322,7 @@ module.exports = {
   fetchAntigravityUsage,
   fetchClaudeUsage,
   normalizeAgyQuota,
+  normalizeAgyGeminiQuota,
   normalizeClaudeUsage,
   normalizeGrokUsage,
   readGrokUsage,

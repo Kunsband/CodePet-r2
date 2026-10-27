@@ -20,7 +20,9 @@ function validTraceAgent(id) {
 }
 
 function redactNamedValues(text) {
-  const keys = /(api[_-]?key|access[_-]?token|refresh[_-]?token|id[_-]?token|session[_-]?token|password|secret|authorization|(?:set-)?cookie)(\\*["'])?\s*[:=]\s*/gi;
+  // id_token/session_token must not be glued to a preceding letter or digit, so
+  // InvalidToken or isValidToken in code is not mistaken for a credential key.
+  const keys = /(api[_-]?key|access[_-]?token|refresh[_-]?token|(?<![A-Za-z0-9])(?:id|session)[_-]?token|password|secret|authorization|(?:set-)?cookie)(\\*["'])?\s*[:=]\s*/gi;
   const parts = [];
   let copied = 0;
   let match;
@@ -47,6 +49,33 @@ function redactNamedValues(text) {
       while (end < text.length && text[end] !== "\r" && text[end] !== "\n") {
         const char = text[end++];
         if (char === quote && slashes % slashPeriod === encodedSlashes) break;
+        slashes = char === "\\" ? slashes + 1 : 0;
+      }
+    } else if (text[start] === "[") {
+      // set-cookie values are often printed as arrays. Track string delimiters so "]"
+      // inside a quoted value does not end the array, and count nested brackets.
+      // The first quote in the array sets the escape depth, because the key may be
+      // unquoted or quoted at another depth ({'set-cookie': [\"…\"]}). util.inspect
+      // uses backticks when a value has both ' and ". Mask to EOL when the array
+      // continues below.
+      let encodedSlashes = -1;
+      let slashPeriod = 0;
+      let slashes = 0;
+      let inString = null;
+      let nesting = 0;
+      end = start;
+      while (end < text.length && text[end] !== "\r" && text[end] !== "\n") {
+        const char = text[end++];
+        if ((char === '"' || char === "'" || char === "`")
+          && (encodedSlashes < 0 || slashes % slashPeriod === encodedSlashes)) {
+          if (encodedSlashes < 0) {
+            encodedSlashes = slashes;
+            slashPeriod = 2 * (slashes + 1);
+          }
+          if (!inString) inString = char;
+          else if (inString === char) inString = null;
+        } else if (!inString && char === "[") nesting++;
+        else if (!inString && char === "]" && --nesting === 0) break;
         slashes = char === "\\" ? slashes + 1 : 0;
       }
     } else {

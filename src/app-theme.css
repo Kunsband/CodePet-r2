@@ -1,0 +1,32 @@
+:root {
+  color-scheme: light;
+  --page: #fafafa;
+  --sidebar: #f4f4f5;
+  --surface: #fff;
+  --surface-strong: #fff;
+  --ink: #09090b;
+  --ink-soft: #27272a;
+  --muted: #52525b;
+  --line: #e4e4e7;
+  --line-strong: #d4d4d8;
+  --accent: #0f172a;
+  --accent-soft: #f4f4f5;
+  --danger: #ef4444;
+  --danger-soft: #fef2f2;
+  --shadow: 0 1px 3px #0000000d, 0 1px 2px #00000005;
+  --font-body: "Segoe UI Variable", "Segoe UI", system-ui, sans-serif;
+  --font-display: "Segoe UI Variable Display", "Segoe UI", system-ui, sans-serif;
+}
+.titlebar { height: 36px; display: flex; align-items: center; justify-content: space-between; background: var(--sidebar); border-bottom: 1px solid var(--line); flex: none; user-select: none; }
+.titlebar-drag { flex: 1; height: 100%; display: flex; align-items: center; padding-left: 14px; gap: 8px; -webkit-app-region: drag; }
+.titlebar-logo { display: inline-flex; position: relative; width: 14px; height: 14px; flex: none; }
+.titlebar-logo i { position: absolute; display: block; width: 8px; height: 8px; border: 1px solid var(--accent); border-radius: 2px; }
+.titlebar-logo i:first-child { top: 0; left: 0; background: var(--accent-soft); }
+.titlebar-logo i:last-child { right: 0; bottom: 0; background: var(--surface); }
+.titlebar-title { font-family: var(--font-display); font-size: 12px; font-weight: 700; color: var(--ink-soft); letter-spacing: -.01em; }
+.titlebar-controls { display: flex; height: 100%; -webkit-app-region: no-drag; }
+.titlebar-btn { width: 46px; height: 100%; display: flex; align-items: center; justify-content: center; background: transparent; color: var(--ink-soft); border: 0; cursor: pointer; transition: background-color 100ms; }
+.titlebar-btn svg { width: 10px; height: 10px; fill: none; stroke: currentColor; stroke-width: 1.2; }
+.titlebar-btn:hover { background: var(--line); }
+.titlebar-btn.btn-close:hover { background: #e81123; color: #fff; }
+.titlebar-btn:focus-visible { outline: 1.5px solid var(--accent); outline-offset: -3px; }

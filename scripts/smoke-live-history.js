@@ -1,0 +1,32 @@
+// Run with electron scripts/smoke-live-history.js. Uses only synthetic data.
+const { app, BrowserWindow, ipcMain } = require('electron');
+const assert = require('node:assert/strict');
+const path = require('node:path');
+const os = require('node:os');
+const fs = require('node:fs');
+const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'codepet-live-ui-'));
+app.setPath('userData', profile);
+const id = '00000000-0000-7000-8000-000000000001';
+app.whenReady().then(async () => {
+  ipcMain.handle('live:catalog', () => ({ ok: true, data: { models: [{ id: 'model', label: 'Model' }], voices: [{ id: 'voice', label: 'Voice' }], defaultModel: 'model', defaultVoice: 'voice', workspace: profile } }));
+  ipcMain.handle('live:history:list', () => ({ ok: true, data: [{ id, title: '이전 질문', updatedAt: Date.now() }] }));
+  ipcMain.handle('live:history:select', (_event, input) => ({ ok: true, data: input.id ? { cwd: profile, messages: [{ role: 'user', text: '이전 질문' }, { role: 'assistant', text: '이전 답변' }] } : { messages: [] } }));
+  const win = new BrowserWindow({ width: 300, height: 480, show: false, webPreferences: { preload: path.join(__dirname, '../src/live-preload.js'), contextIsolation: true, sandbox: true } });
+  await win.loadFile(path.join(__dirname, '../src/live.html'));
+  const run = code => win.webContents.executeJavaScript(code);
+  await run("document.getElementById('history-open').click()");
+  for (let i = 0; i < 100 && !await run("document.getElementById('history').open"); i++) await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(await run("document.querySelectorAll('.history-item').length"), 1);
+  await run("document.querySelector('.history-item').click()");
+  for (let i = 0; i < 100 && !await run("document.getElementById('history-messages').textContent.includes('이전 답변')"); i++) await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(await run("document.getElementById('history-messages').textContent.includes('이전 답변')"), true);
+  assert.equal(await run("document.getElementById('history-continue').hidden"), false);
+  assert.equal(await run("document.documentElement.scrollWidth <= innerWidth"), true);
+  assert.equal(await run("document.getElementById('history').getBoundingClientRect().right <= innerWidth"), true);
+  win.setSize(700, 700);
+  assert.equal(await run("document.getElementById('history').getBoundingClientRect().right <= innerWidth"), true);
+  await run("document.getElementById('history-new').click()");
+  for (let i = 0; i < 100 && await run("document.getElementById('history').open"); i++) await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(await run("document.getElementById('history').open"), false);
+  win.destroy(); console.log('Live history UI passed at 300px'); app.quit();
+}).catch(error => { console.error(error); app.exit(1); });

@@ -253,6 +253,59 @@ test("cookie headers are redacted in verbose command output and structured tool 
   assert.match(raw, /HTTP 200/);
 });
 
+test("set-cookie arrays printed as JSON or inspected objects are redacted as a whole", async t => {
+  const { store } = await fixture(t);
+  const collector = await begin(store, "s1", "codex");
+  const parse = createLineParser("codex", event => collector.add(event));
+  const output = [
+    '{"set-cookie":["a=synthetic-h","b=synthetic-i"]}',
+    "{ 'set-cookie': [ 'sid=synthetic-j; Path=/' ] }",
+    '{"set-cookie":["a=hello]synthetic-m","b=synthetic-n"],"keep":"kept-o"}',
+    '{"cookie":["a=\\"x]\\"synthetic-p","b=synthetic-q"]}',
+    '{"set-cookie":[["a","synthetic-r"],["synthetic-s"]]}',
+    JSON.stringify(JSON.stringify({ "set-cookie": ["a=x]synthetic-t", "b=synthetic-u"], keep: "kept-v" })),
+    // util.inspect quotes a value with both ' and " in backticks.
+    "{ 'set-cookie': [ `a=]synthetic-w\"'` ], keep: 'kept-x' }",
+    // The key's quote depth can differ from the values', or the key can be unquoted.
+    JSON.stringify("{'set-cookie': [\"a=]it's synthetic-y\"], keep: 'kept-z'}"),
+    JSON.stringify('password: ["a]synthetic-aa"], keep: kept-ab'),
+    "status 200",
+  ].join("\n");
+  parse(JSON.stringify({ type: "item.completed", item: {
+    type: "command_execution", command: "node print-headers.js", aggregated_output: output, exit_code: 0,
+  } }));
+  await parse.flushTraces();
+  const id = await store.save({ collector, status: "completed" });
+  const raw = JSON.stringify(await readAll(store, id));
+  assert.doesNotMatch(raw, /synthetic-/);
+  assert.match(raw, /status 200/);
+  assert.match(raw, /kept-o/);
+  assert.match(raw, /kept-v/);
+  assert.match(raw, /kept-x/);
+  assert.match(raw, /kept-z/);
+  assert.match(raw, /kept-ab/);
+});
+
+test("unclosed cookie arrays repeated over many lines are redacted in linear time", async t => {
+  const { store } = await fixture(t);
+  const collector = await begin(store, "s1", "codex");
+  const parse = createLineParser("codex", event => collector.add(event));
+  const started = Date.now();
+  parse(JSON.stringify({ type: "item.completed", item: {
+    type: "command_execution", command: "cat dump.txt", aggregated_output: '"cookie":[\n'.repeat(450_000), exit_code: 0,
+  } }));
+  await parse.flushTraces();
+  // 닫는 ]를 여러 줄 앞까지 찾던 방식은 이 입력에 10초 가까이 걸렸습니다.
+  assert.ok(Date.now() - started < 4000, `${Date.now() - started}ms`);
+});
+
+test("id_token and session_token keys are not matched inside other identifiers", () => {
+  const code = "except InvalidToken:\n    pass\nconst state = { isValidToken: true };";
+  assert.equal(safeText(code), code);
+  assert.equal(safeText('{"id_token": "synthetic-a", "sessionToken": "synthetic-b"}'), '{"id_token": [REDACTED], "sessionToken": [REDACTED]}');
+  assert.equal(safeText("google_id_token=synthetic-c"), "google_id_token=[REDACTED]");
+});
+
 test("all provider parsers preserve complete tool inputs and outputs without changing UI events", () => {
   const fixtures = [
     ["codex", { type: "item.started", item: { id: "c1", type: "command_execution", command: "npm test" } }, "npm test"],
@@ -283,4 +336,54 @@ test("old traces remain readable after years and corrupt files are preserved", a
   assert.equal(page.events[0].output, "old result");
   assert.equal(page.truncated, true);
   assert.equal(await fs.readFile(path.join(root, "traces", broken), "utf8"), "{broken");
+});
+
+test('cookie arrays ignore quoted brackets and escaped delimiters at every encoding depth', () => {
+  const arrays = [
+    ['a=hello]still-secret', 'b=synthetic-value'],
+    ['a=hello\\"]still-secret', 'b=synthetic-value'],
+    ['a=hello\\\\]still-secret', 'b=synthetic-value'],
+    ['a=[nested]still-secret', 'b=synthetic-value'],
+  ];
+  for (const cookies of arrays) {
+    let input = JSON.stringify({ 'set-cookie': cookies, status: 'kept-output' });
+    for (let depth = 0; depth < 4; depth++, input = JSON.stringify(input)) {
+      const result = safeText(input);
+      assert.doesNotMatch(result, /still-secret|synthetic-value/);
+      assert.match(result, /kept-output/);
+    }
+  }
+  assert.equal(safeText("{'set-cookie':['a=hello\\']still-secret','b=synthetic-value'], 'status':'ok'}"), "{'set-cookie':[REDACTED], 'status':'ok'}");
+  assert.equal(safeText('{"set-cookie":[["a=hello]still-secret"],"b=synthetic-value"],"status":200}'), '{"set-cookie":[REDACTED],"status":200}');
+  assert.equal(safeText('{"set-cookie":["a=hello]still-secret\nnext line'), '{"set-cookie":[REDACTED]\nnext line');
+});
+
+test('quoted bracket arrays and curl inputs are masked before trace persistence', async t => {
+  const { store, root } = await fixture(t);
+  const collector = await begin(store, 's1', 'codex');
+  const parse = createLineParser('codex', event => collector.add(event));
+  parse(JSON.stringify({ type: 'item.completed', item: {
+    type: 'command_execution', command: 'curl -b "sid=synthetic-value" https://example.com',
+    aggregated_output: '{"set-cookie":["a=hello]still-secret","b=synthetic-value"],"status":200}', exit_code: 0,
+  } }));
+  await parse.flushTraces();
+  const id = await store.save({ collector, status: 'completed' });
+  const directory = path.join(root, 'traces', id);
+  for (const file of (await fs.readdir(directory)).filter(file => file.endsWith('.gz'))) {
+    assert.doesNotMatch(gunzipSync(await fs.readFile(path.join(directory, file))).toString(), /synthetic-value|still-secret/);
+  }
+  const events = await readAll(new ChatTraceStore({ root }), id);
+  assert.doesNotMatch(JSON.stringify(events), /synthetic-value|still-secret/);
+  assert.match(JSON.stringify(events), /200/);
+});
+
+test('quote-aware cookie array scanner handles large and repeated incomplete arrays', () => {
+  for (const input of [
+    '{"set-cookie":["a=' + ']'.repeat(2_000_000) + 'synthetic-value","b=still-secret"],"status":200}',
+    '{"set-cookie":["a=]synthetic-value\n'.repeat(20_000),
+  ]) {
+    const started = performance.now();
+    assert.doesNotMatch(safeText(input), /synthetic-value|still-secret/);
+    assert.ok(performance.now() - started < 4000, `${performance.now() - started}ms`);
+  }
 });
