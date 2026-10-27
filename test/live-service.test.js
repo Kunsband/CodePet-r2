@@ -230,6 +230,22 @@ test('a native deletion failure preserves local conversation messages', async t 
   assert.equal(f.service.history.read(threadId).deletedAt, undefined);
   assert.equal((await f.service.listHistory()).length, 1);
 });
+test('failed deletion of an active call notifies the renderer to release its microphone', async t => {
+  const f = fixture(t), events = []; f.service.on('event', event => events.push(event));
+  await f.service.start(input('call-a'));
+  const rpc = f.instances[0], request = rpc.request.bind(rpc);
+  rpc.request = async (method, params) => {
+    if (method === 'thread/delete') {
+      assert.ok(events.some(event => event.key === 'call-a' && event.type === 'closed'), 'notify before deletion can fail');
+      throw new Error('delete failed');
+    }
+    return request(method, params);
+  };
+  await assert.rejects(f.service.deleteHistory(threadId), /delete failed/);
+  assert.equal(f.service.call, null);
+  assert.equal(f.service.history.read(threadId).deletedAt, undefined);
+  assert.equal((await f.service.listHistory()).length, 1);
+});
 test('a changed workspace starts a fresh thread with the selected directory', async t => {
   const f = fixture(t), first = path.join(f.service.root, 'first'), second = path.join(f.service.root, 'second');
   fs.mkdirSync(first); fs.mkdirSync(second);

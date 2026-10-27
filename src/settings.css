@@ -207,6 +207,7 @@ input:disabled {
 
 .sidebar-foot {
   display: flex;
+  flex-wrap: wrap;
   align-items: center;
   gap: 8px;
   margin-top: auto;
@@ -262,6 +263,26 @@ input:disabled {
 .update-download:hover { background: var(--line); border-color: var(--muted); }
 .update-download:disabled { cursor: wait; opacity: 0.6; }
 .update-download svg { width: 16px; height: 16px; }
+
+.update-check {
+  flex: 0 0 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--line-strong);
+  border-radius: 6px;
+  background: var(--surface);
+  color: var(--ink);
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+}
+.update-check:hover { background: var(--line); }
+.update-check:disabled { cursor: wait; opacity: 0.6; }
+.sidebar-foot .update-status {
+  flex: 0 0 100%;
+  margin: 0;
+  font-size: 11px;
+  overflow-wrap: anywhere;
+}
 
 .workspace {
   min-width: 0;

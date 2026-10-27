@@ -262,7 +262,12 @@ class LiveService extends EventEmitter {
     if (this.pendingStart) throw new Error('연결이 완료된 뒤 대화를 삭제해 주세요.');
     const record = this.history.read(id);
     if (record?.deletedAt) throw new Error('삭제된 대화입니다.');
-    if (this.call?.threadId === id) await this.stop(this.call.key);
+    const call = this.call;
+    if (call?.threadId === id) {
+      await this.stop(call.key);
+      // Stop renderer media even if the native deletion below fails.
+      this.emit('event', { key: call.key, type: 'closed' });
+    }
     await this.rpc.request('thread/delete', { threadId: id });
     this.history.write({ id, deletedAt: Date.now(), messages: [] });
     const active = this.thread === id;

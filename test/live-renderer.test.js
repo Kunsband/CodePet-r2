@@ -22,7 +22,8 @@ async function fixture() {
   }
   const elements = new Map(), host = new Element(), peers = [], textGate = deferred();
   const get = id => { if (!elements.has(id)) elements.set(id, new Element()); return elements.get(id); };
-  const track = { stop() {}, addEventListener() {} }, stream = { getTracks: () => [track], getAudioTracks: () => [track] };
+  let trackStops = 0, peerCloses = 0, onEvent;
+  const track = { stop() { trackStops++; }, addEventListener() {} }, stream = { getTracks: () => [track], getAudioTracks: () => [track] };
   const audioNode = () => ({ connect() {}, gain: {}, fftSize: 256, getByteTimeDomainData: data => data.fill(128) });
   let historyLists = 0, key = 0;
   const liveApi = {
@@ -31,11 +32,11 @@ async function fixture() {
     historySelect: async () => ({ ok: true, data: { cwd: '/other', messages: [{ role: 'assistant', text: 'Other conversation content' }] } }),
     start: async () => ({ ok: true, data: { threadId: 'fixture-thread' } }),
     stop: async () => ({ ok: true }), text: () => textGate.promise,
-    onEvent() {}, onAppearance() {}, onMaximized() {},
+    onEvent(handler) { onEvent = handler; }, onAppearance() {}, onMaximized() {},
   };
   class Peer {
     constructor() { this.iceGatheringState = 'complete'; peers.push(this); }
-    addTrack() {} close() {} createDataChannel() { return {}; }
+    addTrack() {} close() { peerCloses++; } createDataChannel() { return {}; }
     async createOffer() { return { type: 'offer', sdp: 'v=0\r\ns=fixture' }; }
     async setLocalDescription(value) { this.localDescription = value; }
   }
@@ -60,7 +61,8 @@ async function fixture() {
     assert.equal(get('message').disabled, false);
   };
   await start();
-  return { get, start, textGate, historyLists: () => historyLists,
+  return { get, start, textGate, liveApi, emit: event => onEvent(event),
+    mediaCleanup: () => ({ trackStops, peerCloses }), historyLists: () => historyLists,
     send: text => { get('message').value = text; return get('message-form').dispatch('submit'); },
     selectOther: async () => { get('history-list').children[0].children[0].dispatch('click'); await tick(); },
     messages: () => get('history-messages').children.map(child => child.dataset.text),
@@ -104,4 +106,18 @@ test('text failure in the current call preserves the input and allows retry', as
   assert.equal(f.get('message').value, 'current message');
   assert.equal(f.get('send').disabled, false);
   assert.deepEqual(f.messages(), []);
+});
+
+test('a stopped-call event cleans up media even when deletion returns an error', async () => {
+  const f = await fixture();
+  f.liveApi.historyDelete = async () => {
+    await f.emit({ key: 'call-1', type: 'closed' });
+    return { ok: false, error: 'delete failed' };
+  };
+  await f.get('history-list').children[0].children[1].dispatch('click');
+  assert.deepEqual(f.mediaCleanup(), { trackStops: 1, peerCloses: 1 });
+  assert.equal(f.get('message').disabled, true);
+  assert.equal(f.get('mute').disabled, true);
+  assert.equal(f.get('error').textContent, 'delete failed');
+  assert.equal(f.get('history-list').children.length, 1);
 });
