@@ -1,5 +1,17 @@
 # Release notes / 릴리즈 노트
 
+## 1.1.8 — 2026-10-27
+
+### English
+
+- Add a responsive conversation sidebar to Codex Live and remember each conversation's project folder when switching or continuing conversations.
+- Keep late text responses and errors from appearing in a different conversation after switching, without clearing that conversation's input.
+
+### 한국어
+
+- Codex Live에 반응형 대화 사이드바를 추가하고, 대화를 전환하거나 이어갈 때 각 대화의 프로젝트 폴더를 기억하도록 했습니다.
+- 대화 전환 후 늦게 도착한 텍스트 응답이나 오류가 다른 대화에 표시되거나 해당 대화의 입력 내용을 지우지 않도록 수정했습니다.
+
 ## 1.1.7 — 2026-10-27
 
 ### English

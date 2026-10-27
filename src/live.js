@@ -8,7 +8,10 @@
   if (!selection || typeof selection !== 'object' || Array.isArray(selection)) selection = {};
   const permissions = { ask: '명령과 작업에 대해 승인을 요청합니다.', auto: '일반 작업은 자동으로 진행하고 추가 권한이 필요하면 승인을 요청합니다.', full: '컴퓨터의 파일과 인터넷에 제한 없이 접근합니다.' };
   if (!Object.hasOwn(permissions, selection.permission)) selection.permission = 'ask';
-  let approvalQueue = [], workspace = '';
+  let approvalQueue = [], workspace = '', activeThread = null, historyRequest = 0;
+  if (window.innerWidth <= 600) host.dataset.sidebar = 'closed';
+  function sidebar(open) { host.dataset.sidebar = open ? 'open' : 'closed'; $('history-open').setAttribute('aria-expanded', String(open)); }
+  sidebar(host.dataset.sidebar === 'open');
   function showApproval() {
     if (!approvalQueue.length || !current) { if ($('approval').open) $('approval').close(); return; }
     $('approval-detail').textContent = approvalQueue[0].detail;
@@ -67,6 +70,7 @@
       $('account-label').textContent = catalog.accountLabel;
       $('realtime-model').textContent = catalog.realtimeModel || '서버 기본값';
       appearance(catalog.appearance);
+      await refreshHistory();
       status('음성 대화를 시작해 보세요', 'idle');
     } catch (error) { catalog = null; setError(error.message); status('연결 정보를 불러오지 못했어요', 'idle'); }
     finally { loading = false; update(); }
@@ -176,7 +180,9 @@
       });
       if (current !== session) return;
       animate(session);
-      await valueOf(liveApi.start({ key: session.key, model: selection.model, voice: selection.voice, permission: selection.permission, sdp: pc.localDescription.sdp }));
+      const started = await valueOf(liveApi.start({ key: session.key, model: selection.model, voice: selection.voice, permission: selection.permission, sdp: pc.localDescription.sdp }));
+      activeThread = started.threadId;
+      await refreshHistory();
       if (current !== session) await liveApi.stop(session.key);
     } catch (error) { await fail(session, error); }
   }
@@ -195,6 +201,7 @@
         if (event.done || session.captionsDone[event.role]) caption.textContent = '';
         caption.textContent = (caption.textContent + event.text).slice(-1600);
         session.captionsDone[event.role] = event.done;
+        if (event.done && event.text.trim()) { appendHistoryMessage({ role: event.role, text: event.text }); void refreshHistory(); }
       }
     } catch (error) { await fail(session, error); }
   });
@@ -212,42 +219,52 @@
     event.preventDefault(); const session = current, text = $('message').value.trim();
     if (!session?.connected || session.sending || !text) return;
     session.sending = true; update();
-    try { await valueOf(liveApi.text(session.key, text)); if ($('message').value.trim() === text) $('message').value = ''; }
-    catch (error) { setError(error.message); }
+    try {
+      await valueOf(liveApi.text(session.key, text));
+      if (current !== session) return;
+      if ($('message').value.trim() === text) $('message').value = '';
+      appendHistoryMessage({ role: 'user', text }); void refreshHistory();
+    } catch (error) { if (current === session) setError(error.message); }
     finally { session.sending = false; update(); }
   });
+  function appendHistoryMessage(message) {
+    const last = $('history-messages').lastElementChild;
+    if (last?.dataset.role === message.role && last.dataset.text === message.text) return;
+    const p = document.createElement('p'), strong = document.createElement('strong');
+    p.dataset.role = message.role; p.dataset.text = message.text;
+    strong.textContent = message.role === 'user' ? '나' : 'Live';
+    p.append(strong, document.createElement('br'), document.createTextNode(message.text));
+    $('history-messages').append(p); $('history-messages').hidden = false;
+    $('history-messages').scrollTop = $('history-messages').scrollHeight;
+  }
   async function selectHistory(id) {
     if (current) await end();
     const result = await valueOf(liveApi.historySelect(id));
     if (result.cwd) { workspace = result.cwd; $('workspace').textContent = workspace; }
-    const messages = result.messages || [];
-    $('history-messages').replaceChildren(...messages.map(message => {
-      const p = document.createElement('p'), strong = document.createElement('strong');
-      strong.textContent = message.role === 'user' ? '나' : 'Live';
-      p.append(strong, document.createElement('br'), document.createTextNode(message.text)); return p;
-    }));
-    if (id && !messages.length) $('history-messages').textContent = '저장된 대화 내용이 없습니다.';
-    $('history-continue').hidden = !id;
-    if (!id) { $('history').close(); status('새 대화를 시작해 보세요', 'idle'); }
-    else status('선택한 대화를 이어갈 수 있어요', 'idle');
+    activeThread = id;
+    $('caption-user').textContent = ''; $('caption-assistant').textContent = '';
+    $('history-messages').replaceChildren(); $('history-messages').hidden = true;
+    for (const message of result.messages || []) appendHistoryMessage(message);
+    status(id ? '선택한 대화를 이어갈 수 있어요' : '새 대화를 시작해 보세요', 'idle');
+    if (window.innerWidth <= 600) sidebar(false);
+    await refreshHistory();
   }
-  $('history-open').addEventListener('click', async () => {
+  async function refreshHistory() {
+    const seq = ++historyRequest;
     try {
       const list = await valueOf(liveApi.historyList());
-      $('history-messages').replaceChildren();
-      $('history-continue').hidden = true;
+      if (seq !== historyRequest) return;
       $('history-list').replaceChildren(...list.map(item => {
         const button = document.createElement('button'), date = document.createElement('small');
         button.type = 'button'; button.className = 'history-item'; button.textContent = item.title;
+        button.setAttribute('aria-current', String(item.id === activeThread));
         date.textContent = new Date(item.updatedAt).toLocaleString(); button.append(date);
         button.addEventListener('click', () => { void selectHistory(item.id).catch(error => setError(error.message)); }); return button;
       }));
-      if (!list.length) $('history-messages').textContent = '저장된 대화가 없습니다.';
-      $('history').showModal();
     } catch (error) { setError(error.message); }
-  });
-  $('history-close').addEventListener('click', () => $('history').close());
-  $('history-continue').addEventListener('click', () => { $('history').close(); void start(); });
+  }
+  $('history-open').addEventListener('click', () => sidebar(host.dataset.sidebar !== 'open'));
+  $('sidebar-backdrop').addEventListener('click', () => sidebar(false));
   $('history-new').addEventListener('click', () => { void selectHistory(null).catch(error => setError(error.message)); });
   const openSettings = () => { $('model').value = selection.model || ''; $('voice').value = selection.voice || ''; $('permission').value = selection.permission; $('permission-description').textContent = permissions[selection.permission]; $('settings').showModal(); };
   $('permission').addEventListener('change', () => { $('permission-description').textContent = permissions[$('permission').value]; });
