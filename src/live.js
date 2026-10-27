@@ -216,6 +216,39 @@
     catch (error) { setError(error.message); }
     finally { session.sending = false; update(); }
   });
+  async function selectHistory(id) {
+    if (current) await end();
+    const result = await valueOf(liveApi.historySelect(id));
+    if (result.cwd) { workspace = result.cwd; $('workspace').textContent = workspace; }
+    const messages = result.messages || [];
+    $('history-messages').replaceChildren(...messages.map(message => {
+      const p = document.createElement('p'), strong = document.createElement('strong');
+      strong.textContent = message.role === 'user' ? '나' : 'Live';
+      p.append(strong, document.createElement('br'), document.createTextNode(message.text)); return p;
+    }));
+    if (id && !messages.length) $('history-messages').textContent = '저장된 대화 내용이 없습니다.';
+    $('history-continue').hidden = !id;
+    if (!id) { $('history').close(); status('새 대화를 시작해 보세요', 'idle'); }
+    else status('선택한 대화를 이어갈 수 있어요', 'idle');
+  }
+  $('history-open').addEventListener('click', async () => {
+    try {
+      const list = await valueOf(liveApi.historyList());
+      $('history-messages').replaceChildren();
+      $('history-continue').hidden = true;
+      $('history-list').replaceChildren(...list.map(item => {
+        const button = document.createElement('button'), date = document.createElement('small');
+        button.type = 'button'; button.className = 'history-item'; button.textContent = item.title;
+        date.textContent = new Date(item.updatedAt).toLocaleString(); button.append(date);
+        button.addEventListener('click', () => { void selectHistory(item.id).catch(error => setError(error.message)); }); return button;
+      }));
+      if (!list.length) $('history-messages').textContent = '저장된 대화가 없습니다.';
+      $('history').showModal();
+    } catch (error) { setError(error.message); }
+  });
+  $('history-close').addEventListener('click', () => $('history').close());
+  $('history-continue').addEventListener('click', () => { $('history').close(); void start(); });
+  $('history-new').addEventListener('click', () => { void selectHistory(null).catch(error => setError(error.message)); });
   const openSettings = () => { $('model').value = selection.model || ''; $('voice').value = selection.voice || ''; $('permission').value = selection.permission; $('permission-description').textContent = permissions[selection.permission]; $('settings').showModal(); };
   $('permission').addEventListener('change', () => { $('permission-description').textContent = permissions[$('permission').value]; });
   $('workspace-choose').addEventListener('click', async () => {

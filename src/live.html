@@ -28,7 +28,7 @@
     </div>
   </div>
   <main class="live-window" data-mode="character" data-state="idle">
-    <header class="live-header"><div class="live-title"><svg><use href="#i-wave"/></svg><h1>Live</h1></div><button class="icon-button" id="settings-open" aria-label="음성 설정"><svg><use href="#i-settings"/></svg></button></header>
+    <header class="live-header"><div class="live-title"><svg><use href="#i-wave"/></svg><h1>Live</h1></div><div class="header-actions"><button class="history-button" id="history-open">대화 기록</button><button class="icon-button" id="settings-open" aria-label="음성 설정"><svg><use href="#i-settings"/></svg></button></div></header>
     <div class="conversation">
       <div class="visual-stage"><div class="character" role="img" aria-label="GPT 캐릭터"><div class="character-frame"></div></div><div class="orb" aria-label="음성 상태" role="img"><i></i><i></i></div></div>
       <div class="status" role="status"><span class="status-dot"></span><span id="status">연결 정보를 불러오는 중…</span></div>
@@ -57,6 +57,13 @@
     <h2 id="approval-title">권한 요청</h2>
     <pre id="approval-detail"></pre>
     <div class="settings-actions"><button type="button" class="button" id="approval-deny">거부</button><button type="button" class="button button-primary" id="approval-accept">승인</button></div>
+  </dialog>
+  <dialog id="history" aria-labelledby="history-title">
+    <header class="settings-header"><h2 id="history-title">대화 기록</h2><button class="icon-button" id="history-close" aria-label="기록 닫기"><svg><use href="#i-close"/></svg></button></header>
+    <button type="button" class="button" id="history-new">새 대화</button>
+    <div id="history-list" class="history-list"></div>
+    <div id="history-messages" class="history-messages" aria-live="polite"></div>
+    <div class="settings-actions"><button type="button" class="button button-primary" id="history-continue" hidden>이 대화 이어가기</button></div>
   </dialog>
   <audio id="remote-audio" autoplay></audio>
   <script src="live.js"></script>

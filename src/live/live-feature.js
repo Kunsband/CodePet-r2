@@ -73,6 +73,12 @@ function createLiveFeature({ electron, root, defaultWorkspace = process.cwd(), g
       return { workspace };
     });
     handle('live:start', input => ensureService().start({ ...input, workspace }));
+    handle('live:history:list', () => ensureService().listHistory());
+    handle('live:history:select', async input => {
+      const result = await ensureService().selectHistory(input?.id ?? null);
+      if (result.cwd) workspace = result.cwd;
+      return result;
+    });
     handle('live:text', input => ensureService().text(input));
     handle('live:approval', input => ensureService().respondApproval(input));
     handle('live:stop', input => service?.stop(input?.key));

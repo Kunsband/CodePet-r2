@@ -10,6 +10,14 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .live-header { display: flex; align-items: center; justify-content: space-between; padding: 8px 16px; min-height: 55px; flex: none; background: var(--surface); border-bottom: 1px solid var(--line); }
 .live-title { display: flex; align-items: center; gap: 8px; }
 .live-title h1 { margin: 0; font: 700 14px var(--font-display); letter-spacing: -.02em; }
+.header-actions { display: flex; align-items: center; gap: 8px; }
+.history-button { background: transparent; color: var(--muted); padding: 6px; border-radius: 6px; }
+.history-button:hover { background: var(--accent-soft); }
+.history-list { display: grid; gap: 6px; margin: 12px 0; max-height: 25vh; overflow: auto; }
+.history-item { text-align: left; padding: 8px; border-radius: 6px; background: var(--accent-soft); overflow-wrap: anywhere; }
+.history-item small { display: block; color: var(--muted); }
+.history-messages { max-height: 35vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; }
+.history-messages p { margin: 0 0 12px; }
 .icon-button { display: grid; place-items: center; padding: 0; width: 36px; height: 36px; border-radius: 10px; flex: none; background: transparent; }
 .live-header .icon-button { width: 32px; height: 32px; border: 1px solid var(--line-strong); border-radius: 6px; color: var(--muted); }
 .icon-button:hover { background: var(--accent-soft); }

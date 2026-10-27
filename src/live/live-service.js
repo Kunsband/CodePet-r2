@@ -4,6 +4,7 @@ const path = require('node:path');
 const { CodexChatRuntime } = require('../chat/codex-chat-runtime');
 const { CodexLiveRpc, resolveCodexCommand } = require('./codex-live-rpc');
 const { redactSensitiveText } = require('../chat/chat-run-diagnostics');
+const { LiveHistory, validId } = require('./live-history');
 
 const selectionId = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$/.test(value);
 const sessionKey = value => typeof value === 'string' && /^[a-zA-Z0-9-]{1,100}$/.test(value);
@@ -71,6 +72,7 @@ class LiveService extends EventEmitter {
       rpc = this.makeRpc({ ...command, env: prepared.env, argv: prepared.argv, cwd: prepared.home });
     } catch (error) { prepared.finish(); throw error; }
     this.rpc = rpc; this.prepared = prepared; this.identity = identity;
+    this.history = new LiveHistory(prepared.home);
     rpc.on('notification', message => this.notification(message));
     rpc.on('request', message => {
       const params = message.params || {};
@@ -147,15 +149,19 @@ class LiveService extends EventEmitter {
       this.thread = response.thread.id;
       this.threadWorkspace = cwd;
       call.threadId = this.thread;
+      let record = this.history.read(this.thread);
+      if (!record) { record = { id: this.thread, cwd, createdAt: Date.now(), updatedAt: Date.now(), messages: [] }; this.history.write(record); }
+      call.record = record;
       if (this.call !== call || pending.cancelled) throw new Error('연결이 취소되었습니다.');
       await rpc.request('thread/realtime/start', {
         threadId: call.threadId, realtimeSessionId: call.key, voiceSessionId: call.key,
         version: catalog.version, outputModality: 'audio', voice: input.voice,
         transport: { type: 'webrtc', sdp: input.sdp }, includeStartupContext: true,
-        prompt: 'You are the voice interface for this conversation. Respond in the language the user is speaking unless they ask for another language. Keep responses natural and conversational.',
+        prompt: 'You are the voice interface for this conversation. Respond in the language the user is speaking unless they ask for another language. Keep responses natural and conversational.' +
+          (record.messages.length ? '\nEarlier conversation, for context:\n' + record.messages.map(m => `${m.role}: ${m.text}`).join('\n').slice(-16000) : ''),
       });
       if (this.call !== call || pending.cancelled) throw new Error('연결이 취소되었습니다.');
-      return { key: call.key, model: response.model || input.model };
+      return { key: call.key, model: response.model || input.model, threadId: this.thread };
     } catch (error) {
       if (this.call === call) this.call = null;
       if (call.threadId) await rpc.request('thread/realtime/stop', { threadId: call.threadId }, 5000).catch(() => {});
@@ -170,14 +176,66 @@ class LiveService extends EventEmitter {
     else if (method === 'thread/realtime/error') { emit({ type: 'error', message: publicError(params.message) }); void this.stop(call.key); }
     else if (method === 'thread/realtime/closed') { if (this.pendingStart) this.pendingStart.cancelled = true; this.clearApprovals(); this.call = null; emit({ type: 'closed' }); }
     else if (method === 'thread/realtime/transcript/delta' || method === 'thread/realtime/transcript/done') {
-      if (params.role === 'user' || params.role === 'assistant') emit({ type: 'transcript', role: params.role,
-        done: method.endsWith('/done'), text: String(params.text ?? params.delta ?? '').slice(-12000) });
+      if (params.role === 'user' || params.role === 'assistant') {
+        if (method.endsWith('/done') && typeof params.text === 'string' && params.text.trim()) this.saveMessage(call, params.role, params.text);
+        emit({ type: 'transcript', role: params.role, done: method.endsWith('/done'), text: String(params.text ?? params.delta ?? '').slice(-12000) });
+      }
     }
+  }
+  saveMessage(call, role, text) {
+    if (!call.record) return;
+    const messages = call.record.messages;
+    if (messages.at(-1)?.role === role && messages.at(-1)?.text === text) return;
+    messages.push({ role, text, at: Date.now() });
+    call.record.updatedAt = Date.now();
+    try { this.history.write(call.record); } catch (error) { this.emit('event', { key: call.key, type: 'notice', message: '대화 기록을 저장하지 못했습니다: ' + publicError(error) }); }
+  }
+  async listHistory() {
+    await this.prepare();
+    const records = this.history.list();
+    let cursor = null; const seen = new Set();
+    do {
+      const native = await this.rpc.request('thread/list', { limit: 100, sortKey: 'updated_at', ...(cursor ? { cursor } : {}) });
+      for (const thread of native.data || []) {
+        if (validId(thread.id) && !records.some(record => record.id === thread.id)) {
+          records.push({ id: thread.id, cwd: thread.cwd, createdAt: thread.createdAt * 1000, updatedAt: thread.updatedAt * 1000, messages: [] });
+        }
+      }
+      cursor = native.nextCursor || null;
+      if (cursor && seen.has(cursor)) throw new Error('대화 목록을 불러오지 못했습니다.');
+      seen.add(cursor);
+    } while (cursor);
+    return records.sort((a, b) => b.updatedAt - a.updatedAt).map(record => ({ id: record.id, cwd: record.cwd, updatedAt: record.updatedAt,
+      title: record.messages.find(m => m.role === 'user')?.text.slice(0, 80) || '새 대화' }));
+  }
+  async selectHistory(id) {
+    if (this.call || this.pendingStart) throw new Error('음성 대화를 종료한 뒤 선택해 주세요.');
+    await this.prepare();
+    if (id === null) { this.thread = null; this.threadWorkspace = null; return { messages: [] }; }
+    if (!validId(id)) throw new Error('대화 ID가 올바르지 않습니다.');
+    let record = this.history.read(id);
+    if (!record) {
+      const result = await this.rpc.request('thread/read', { threadId: id, includeTurns: true });
+      const thread = result.thread;
+      if (!thread || thread.id !== id) throw new Error('대화 기록을 찾을 수 없습니다.');
+      const messages = [];
+      for (const turn of thread.turns || []) for (const item of turn.items || []) {
+        const text = item.type === 'userMessage' ? (item.content || []).filter(part => part.type === 'text').map(part => part.text).join('\n') : item.type === 'agentMessage' ? item.text : '';
+        if (text) messages.push({ role: item.type === 'userMessage' ? 'user' : 'assistant', text });
+      }
+      record = { id, cwd: thread.cwd, createdAt: thread.createdAt * 1000, updatedAt: thread.updatedAt * 1000, messages };
+      this.history.write(record);
+    }
+    if (!record) throw new Error('대화 기록을 찾을 수 없습니다.');
+    if (!path.isAbsolute(record.cwd) || !fs.statSync(record.cwd).isDirectory()) throw new Error('이 대화의 작업 폴더를 찾을 수 없습니다.');
+    this.thread = id; this.threadWorkspace = record.cwd;
+    return { id, cwd: record.cwd, messages: record.messages };
   }
   async text({ key, text }) {
     if (!this.call || this.call.key !== key || !this.call.threadId) throw new Error('음성 연결이 종료되었습니다.');
     if (typeof text !== 'string' || !text.trim() || text.length > 8000) throw new Error('메시지는 1~8,000자까지 입력할 수 있습니다.');
     await this.rpc.request('thread/realtime/appendText', { threadId: this.call.threadId, text: text.trim() });
+    this.saveMessage(this.call, 'user', text.trim());
   }
   respondApproval({ key, id, approve }) {
     const pending = this.approvals.get(String(id));

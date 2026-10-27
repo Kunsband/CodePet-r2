@@ -6,6 +6,7 @@ const os = require('node:os');
 const path = require('node:path');
 const { LiveService, catalogFrom } = require('../src/live/live-service');
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
+const threadId = '00000000-0000-7000-8000-000000000001';
 const input = key => ({ key, model: 'server-model', voice: 'server-voice', sdp: 'v=0\r\ns=fixture\r\n' });
 function fixture(t) {
   const root = fs.mkdtempSync(path.join(os.tmpdir(), 'codepet-live-'));
@@ -20,7 +21,7 @@ function fixture(t) {
       if (method === 'config/read') return { config: { model: 'server-model' } };
       if (method === 'thread/realtime/listVoices') return { voices: { v3: ['server-voice'], defaultV1: 'server-voice' } };
       if (method === 'model/list') return { data: [{ model: 'server-model', displayName: 'Server model', isDefault: true }] };
-      if (method === 'thread/start' || method === 'thread/resume') return { thread: { id: 'thread-' + instances.length }, model: params.model };
+      if (method === 'thread/start' || method === 'thread/resume') return { thread: { id: threadId }, model: params.model };
       return {};
     }
     send(message) { this.lastSent = message; }
@@ -61,17 +62,17 @@ test('start validates actual selections, forwards SDP and limits untrusted permi
   const rpc = f.instances[0];
   rpc.emit('notification', { method: 'thread/realtime/sdp', params: { threadId: 'unrelated', sdp: 'ignored' } });
   assert.equal(events.length, 0);
-  rpc.emit('notification', { method: 'thread/realtime/sdp', params: { threadId: 'thread-1', sdp: 'answer' } });
+  rpc.emit('notification', { method: 'thread/realtime/sdp', params: { threadId, sdp: 'answer' } });
   assert.deepEqual(events[0], { key: 'call-a', type: 'sdp', sdp: 'answer' });
   rpc.emit('request', { id: 4, method: 'item/commandExecution/requestApproval' });
   assert.deepEqual(rpc.lastSent, { id: 4, result: { decision: 'decline' } });
-  rpc.emit('request', { id: 5, method: 'item/commandExecution/requestApproval', params: { threadId: 'thread-1', command: 'echo hi' } });
+  rpc.emit('request', { id: 5, method: 'item/commandExecution/requestApproval', params: { threadId, command: 'echo hi' } });
   assert.equal(events.at(-1).type, 'approval');
   f.service.respondApproval({ key: 'call-a', id: '5', approve: true });
   assert.deepEqual(rpc.lastSent, { id: 5, result: { decision: 'accept' } });
   await f.service.stop('stale-call'); assert.equal(f.service.call.key, 'call-a');
   await f.service.stop('call-a'); assert.equal(f.service.call, null);
-  rpc.emit('notification', { method: 'thread/realtime/sdp', params: { threadId: 'thread-1', sdp: 'late' } });
+  rpc.emit('notification', { method: 'thread/realtime/sdp', params: { threadId, sdp: 'late' } });
   assert.equal(events.filter(e => e.type === 'sdp').length, 1);
 });
 test('permission levels configure the server and pending approvals are denied on stop', async t => {
@@ -80,12 +81,26 @@ test('permission levels configure the server and pending approvals are denied on
   const params = f.requests.find(r => r.method === 'thread/start').params;
   assert.equal(params.sandbox, 'danger-full-access'); assert.equal(params.approvalPolicy, 'never');
   const rpc = f.instances[0];
-  rpc.emit('request', { id: 8, method: 'item/permissions/requestApproval', params: { threadId: 'thread-1', permissions: { network: { enabled: true } } } });
+  rpc.emit('request', { id: 8, method: 'item/permissions/requestApproval', params: { threadId, permissions: { network: { enabled: true } } } });
   await f.service.stop('call-a');
   assert.deepEqual(rpc.lastSent, { id: 8, result: { permissions: {}, scope: 'turn' } });
   await f.service.start({ ...input('call-b'), permission: 'auto' });
   const resumed = f.requests.find(r => r.method === 'thread/resume').params;
   assert.equal(resumed.sandbox, 'workspace-write'); assert.equal(resumed.approvalPolicy, 'on-request');
+});
+test('completed transcripts survive reconnection and are supplied when continuing a selected conversation', async t => {
+  const f = fixture(t), cwd = f.service.root;
+  await f.service.start({ ...input('call-a'), workspace: cwd });
+  f.instances[0].emit('notification', { method: 'thread/realtime/transcript/done', params: { threadId, role: 'user', text: 'Earlier question' } });
+  f.instances[0].emit('notification', { method: 'thread/realtime/transcript/done', params: { threadId, role: 'assistant', text: 'Earlier answer' } });
+  await f.service.stop('call-a');
+  assert.equal((await f.service.listHistory())[0].title, 'Earlier question');
+  f.service.resetConnection();
+  const selected = await f.service.selectHistory(threadId);
+  assert.equal(selected.messages.length, 2);
+  await f.service.start({ ...input('call-b'), workspace: cwd });
+  assert.equal(f.requests.at(-2).method, 'thread/resume');
+  assert.match(f.requests.at(-1).params.prompt, /Earlier question[\s\S]*Earlier answer/);
 });
 test('a changed workspace starts a fresh thread with the selected directory', async t => {
   const f = fixture(t), first = path.join(f.service.root, 'first'), second = path.join(f.service.root, 'second');
