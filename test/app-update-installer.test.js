@@ -26,7 +26,7 @@ async function fixture(t, options = {}) {
     spawnImpl: (command, args, opts) => {
       spawns++;
       assert.equal(opts.windowsHide, true);
-      assert.equal(opts.detached, true);
+      assert.equal(opts.detached, false);
       assert.equal(opts.cwd, dir);
       assert.ok(!args.includes("-ExecutionPolicy"));
       helperConfig = JSON.parse(opts.env.CODEPET_UPDATE_CONFIG);

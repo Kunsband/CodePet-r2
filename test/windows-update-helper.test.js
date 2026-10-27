@@ -110,4 +110,42 @@ test("Windows helper replaces and restarts a native EXE, or restores it after fa
       if (fail) assert.match(await fs.readFile(path.join(stage, "update.log"), "utf8"), /exited before startup/);
     });
   }
+  await t.test("production helper launch survives the initiating process and completes the update", async t => {
+    const folder = path.join(dir, "production launch 한글");
+    await fs.mkdir(folder);
+    const target = path.join(folder, "CodePet.exe");
+    const marker = path.join(folder, "launches.txt");
+    const payload = path.join(folder, "candidate.exe");
+    await fs.writeFile(target, fixtures.old);
+    await fs.writeFile(payload, fixtures.new);
+    const entry = path.join(folder, "parent.cjs");
+    await fs.writeFile(entry, `
+      const fs = require('node:fs');
+      const { createHash } = require('node:crypto');
+      const { AppUpdateInstaller } = require(${JSON.stringify(require.resolve("../src/app-update-installer"))});
+      const bytes = fs.readFileSync(${JSON.stringify(payload)});
+      const checksum = createHash('sha256').update(bytes).digest('hex');
+      const root = 'https://github.com/nokryong/CodePet/releases/download/v9.9.9/';
+      const updater = new AppUpdateInstaller({
+        app: { isPackaged: true, quit: () => process.exit(0) },
+        fetchImpl: async url => new Response(url.endsWith('SHA256SUMS') ? checksum + '  CodePet-9.9.9.exe\\n' : bytes),
+      });
+      updater.install({ asset: { name: 'CodePet-9.9.9.exe', url: root + 'CodePet-9.9.9.exe', size: bytes.length },
+        checksumUrl: root + 'SHA256SUMS' }).catch(error => { console.error(error.stack); process.exit(1); });
+    `);
+    // Exercise the real AppUpdateInstaller launch options, then let that parent
+    // exit. Directly spawning the PowerShell script misses Windows detach bugs.
+    const parent = spawn(process.env.CODEPET_UPDATE_TEST_RUNTIME || process.execPath, [entry], { windowsHide: true, env: { ...process.env,
+      ...(process.env.CODEPET_UPDATE_TEST_RUNTIME ? { ELECTRON_RUN_AS_NODE: "1" } : {}),
+      PORTABLE_EXECUTABLE_FILE: target, CODEPET_TEST_MARKER: marker, CODEPET_TEST_FAIL_UPDATE: "0" } });
+    t.after(() => parent.kill());
+    let stderr = "";
+    parent.stderr.on("data", chunk => { stderr += chunk; });
+    const code = await new Promise((resolve, reject) => { parent.once("exit", resolve); parent.once("error", reject); });
+    assert.equal(code, 0, stderr);
+    await waitFor(() => exists(marker), "Helper did not survive the initiating process");
+    assert.match(await fs.readFile(marker, "utf8"), /^new\|/);
+    assert.deepEqual(await fs.readFile(target), fixtures.new);
+    await waitFor(async () => !(await fs.readdir(folder)).some(name => name.startsWith(".codepet-update-")), "Successful update did not clean its backup");
+  });
 });
