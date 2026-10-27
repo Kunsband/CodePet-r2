@@ -8,6 +8,7 @@ const {
   fetchAntigravityUsage,
   fetchClaudeUsage,
   normalizeAgyQuota,
+  normalizeAgyGeminiQuota,
   normalizeClaudeUsage,
   normalizeGrokUsage,
   readGrokUsage,
@@ -21,6 +22,114 @@ function jsonResponse(value, status = 200) {
     json: async () => value,
   };
 }
+
+const partnerQuota = { groups: [{ displayName: "Claude and GPT models",
+  buckets: [{ displayName: "Weekly Limit Remaining", remainingFraction: 1, resetTime: "2026-11-03T01:00:00Z" }] }] };
+const geminiModels = { models: {
+  "gemini-flash": { displayName: "Gemini Flash", quotaInfo: { remainingFraction: 0.7, resetTime: "2026-11-03T02:00:00Z" } },
+} };
+
+function mockAgyQuota(t, { summary = partnerQuota, models = geminiModels, modelStatus = 200 } = {}) {
+  clearUsageCache();
+  t.after(() => clearUsageCache());
+  const requests = [];
+  t.mock.method(global, "fetch", async (url, options) => {
+    requests.push({ url, options });
+    if (url.endsWith(":loadCodeAssist")) return jsonResponse({ cloudaicompanionProject: { id: "projects/test" } });
+    if (url.includes("userinfo")) return jsonResponse({ email: "agy@example.com" });
+    if (url.endsWith(":retrieveUserQuotaSummary")) return jsonResponse(summary);
+    if (url.endsWith(":fetchAvailableModels")) return jsonResponse(models, modelStatus);
+    throw new Error("Unexpected endpoint");
+  });
+  return requests;
+}
+
+test("Gemini tier catalog excludes legacy/internal models and collapses matching quota rows", () => {
+  const quotaInfo = { remainingFraction: 1, resetTime: "reset" };
+  const models = { models: {
+    "gemini-lite": { displayName: "Gemini Lite", quotaInfo },
+    "gemini-tiered": { quotaInfo },
+    "gemini-legacy": { displayName: "Gemini Legacy", quotaInfo: { remainingFraction: 0 } },
+    "gemini-hidden": { displayName: "Gemini Internal", isInternal: true, quotaInfo: { remainingFraction: 0 } },
+    "tab_internal": { quotaInfo },
+    "claude-sonnet": { displayName: "Claude Sonnet", quotaInfo },
+  }, tieredModelIds: { flashLite: ["gemini-lite"], flash: ["gemini-tiered"], pro: ["gemini-tiered", "gemini-hidden"] } };
+  assert.deepEqual(normalizeAgyGeminiQuota(models), [{ label: "Gemini", usedPercent: 0, resetText: "reset" }]);
+});
+
+test("Gemini fallback preserves different model limits, deduplicates aliases and keeps explicit zero", () => {
+  const flash = { displayName: "Gemini Flash", quotaInfo: { remainingFraction: "0.7", resetTime: "first" } };
+  assert.deepEqual(normalizeAgyGeminiQuota({ models: {
+    "gemini-flash": flash, "gemini-alias": flash,
+    "gemini-pro": { displayName: "Gemini Pro", quota_info: { remaining_fraction: 0, reset_time: "second" } },
+  } }), [
+    { label: "Gemini Flash", usedPercent: 30, resetText: "first" },
+    { label: "Gemini Pro", usedPercent: 100, resetText: "second" },
+  ]);
+});
+
+test("missing or malformed Gemini quota never becomes a full balance or falls back to stale aliases", () => {
+  for (const value of [undefined, null, "", " ", false, {}, "unknown", NaN, Infinity]) {
+    assert.deepEqual(normalizeAgyGeminiQuota({ models: {
+      "gemini-flash": { displayName: "Gemini Flash", quotaInfo: { remainingFraction: value } },
+    } }), []);
+  }
+  assert.deepEqual(normalizeAgyGeminiQuota({ tieredModelIds: { flash: ["gemini-current"] }, models: {
+    "gemini-current": { displayName: "Gemini", quotaInfo: {} },
+    "gemini-old": { displayName: "Gemini Old", quotaInfo: { remainingFraction: 1 } },
+  } }), []);
+  assert.deepEqual(normalizeAgyGeminiQuota(null), []);
+});
+
+test("AGY supplements a partner-only summary with Gemini using the same project and credential", async (t) => {
+  const requests = mockAgyQuota(t);
+  const result = await fetchAntigravityUsage({ credential: { token: { access_token: "test-access" } }, force: true });
+  assert.deepEqual(result.gauges, [
+    ...normalizeAgyQuota(partnerQuota), { label: "Gemini", usedPercent: 30, resetText: "2026-11-03T02:00:00Z" },
+  ]);
+  const modelRequest = requests.find(({ url }) => url.endsWith(":fetchAvailableModels"));
+  assert.deepEqual(JSON.parse(modelRequest.options.body), { project: "projects/test" });
+  assert.equal(modelRequest.options.headers.authorization, "Bearer test-access");
+});
+
+test("AGY keeps authoritative Gemini summary windows without an extra model request", async (t) => {
+  const summary = { groups: [{ displayName: "Gemini models", buckets: [
+    { displayName: "5-hour Remaining", remainingFraction: 0.5 },
+    { displayName: "Weekly Remaining", remainingFraction: 0.2 },
+  ] }] };
+  const requests = mockAgyQuota(t, { summary });
+  const result = await fetchAntigravityUsage({ credential: { token: { access_token: "test-access" } }, force: true });
+  assert.deepEqual(result.gauges, normalizeAgyQuota(summary));
+  assert.equal(requests.some(({ url }) => url.endsWith(":fetchAvailableModels")), false);
+});
+
+test("a failed optional Gemini request preserves the existing partner quota", async (t) => {
+  mockAgyQuota(t, { modelStatus: 503 });
+  const result = await fetchAntigravityUsage({ credential: { token: { access_token: "test-access" } }, force: true });
+  assert.deepEqual(result.gauges, normalizeAgyQuota(partnerQuota));
+});
+
+test("Gemini authentication failures use the existing credential refresh and retry path", async (t) => {
+  clearUsageCache(); t.after(() => clearUsageCache());
+  const current = { token: { access_token: "refreshed", refresh_token: "same-account" } };
+  const headers = [];
+  t.mock.method(global, "fetch", async (url, options) => {
+    if (url.includes("userinfo")) return jsonResponse({ email: "agy@example.com" });
+    if (url.endsWith(":loadCodeAssist")) return jsonResponse({ cloudaicompanionProject: "projects/test" });
+    if (url.endsWith(":retrieveUserQuotaSummary")) return jsonResponse(partnerQuota);
+    if (url.endsWith(":fetchAvailableModels")) {
+      headers.push(options.headers.authorization);
+      return jsonResponse(geminiModels, options.headers.authorization === "Bearer refreshed" ? 200 : 401);
+    }
+    throw new Error("Unexpected endpoint");
+  });
+  const result = await fetchAntigravityUsage({
+    credential: { token: { access_token: "expired", refresh_token: "same-account" } }, force: true,
+    credentialStore: { read: async () => current, write: () => { throw new Error("Already refreshed; must not write"); } },
+  });
+  assert.deepEqual(headers, ["Bearer expired", "Bearer refreshed"]);
+  assert.equal(result.gauges.at(-1).label, "Gemini");
+});
 
 test("AGY 한도는 남은 비율을 사용률로 바꾸고 잘못된 bucket은 제외한다", () => {
   assert.deepEqual(
