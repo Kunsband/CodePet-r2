@@ -1,5 +1,19 @@
 # Release notes / 릴리즈 노트
 
+## 1.1.4 — 2026-10-27
+
+### English
+
+- Add Codex Live voice conversations over WebRTC, with microphone mute, captions, text input, and voice selection using the signed-in Codex account.
+- Isolate the Live window and restrict its permissions to audio. Keep Codex conversations read-only and release microphone resources when calls end, are cancelled, or the system suspends.
+- Apply the shared app theme to chat and settings windows.
+
+### 한국어
+
+- 로그인한 Codex 계정으로 WebRTC 음성 대화를 할 수 있는 Codex Live를 추가했습니다. 마이크 음소거, 자막, 텍스트 입력, 목소리 선택을 지원합니다.
+- Live 창을 격리하고 오디오 권한만 허용합니다. Codex 대화는 읽기 전용으로 유지하며, 통화 종료·취소·절전 시 마이크 자원을 해제합니다.
+- 채팅과 설정 창에 공통 앱 테마를 적용했습니다.
+
 ## 1.1.3 — 2026-10-27
 
 ### English
