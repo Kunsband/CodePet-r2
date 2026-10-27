@@ -1,9 +1,17 @@
 const path = require('node:path');
+const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const { LiveService, publicError } = require('./live-service');
+const { atomicWriteText } = require('../provider-profile-store');
 
-function createLiveFeature({ electron, root, getAccount, getAppearance, makeService, onWindowReady }) {
-  const { BrowserWindow, ipcMain, powerMonitor } = electron;
+function createLiveFeature({ electron, root, defaultWorkspace = process.cwd(), getAccount, getAppearance, makeService, onWindowReady }) {
+  const { BrowserWindow, ipcMain, powerMonitor, dialog } = electron;
+  const workspaceFile = path.join(root, 'workspace.json');
+  let workspace = path.resolve(defaultWorkspace);
+  try {
+    const saved = JSON.parse(fs.readFileSync(workspaceFile, 'utf8'));
+    if (typeof saved.workspace === 'string' && path.isAbsolute(saved.workspace) && fs.statSync(saved.workspace).isDirectory()) workspace = fs.realpathSync(saved.workspace);
+  } catch {}
   const page = pathToFileURL(path.join(__dirname, '..', 'live.html')).href;
   let window = null, service = null;
   const ensureService = () => {
@@ -53,9 +61,26 @@ function createLiveFeature({ electron, root, getAccount, getAppearance, makeServ
       try { return { ok: true, data: await fn(input) }; }
       catch (error) { return { ok: false, error: publicError(error) }; }
     });
-    handle('live:catalog', async input => ({ ...await ensureService().prepare(input?.refresh === true), appearance: getAppearance() }));
-    handle('live:start', input => ensureService().start(input));
+    handle('live:catalog', async input => ({ ...await ensureService().prepare(input?.refresh === true), appearance: getAppearance(), workspace }));
+    handle('live:workspace:choose', async () => {
+      const result = await dialog.showOpenDialog(window, { title: '작업 폴더 선택', defaultPath: workspace, properties: ['openDirectory'] });
+      if (result.canceled || !result.filePaths?.[0]) return { canceled: true };
+      const selected = fs.realpathSync(result.filePaths[0]);
+      if (!fs.statSync(selected).isDirectory()) throw new Error('선택한 폴더를 확인할 수 없습니다.');
+      fs.mkdirSync(root, { recursive: true });
+      atomicWriteText(workspaceFile, JSON.stringify({ workspace: selected }));
+      workspace = selected;
+      return { workspace };
+    });
+    handle('live:start', input => ensureService().start({ ...input, workspace }));
+    handle('live:history:list', () => ensureService().listHistory());
+    handle('live:history:select', async input => {
+      const result = await ensureService().selectHistory(input?.id ?? null);
+      if (result.cwd) workspace = result.cwd;
+      return result;
+    });
     handle('live:text', input => ensureService().text(input));
+    handle('live:approval', input => ensureService().respondApproval(input));
     handle('live:stop', input => service?.stop(input?.key));
     handle('live:window', action => {
       if (action === 'close') window.close();

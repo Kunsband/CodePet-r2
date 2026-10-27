@@ -37,7 +37,7 @@ test('Live IPC accepts only its exact local main frame and returns appearance wi
   const expected = pathToFileURL(path.resolve('src/live.html')).href;
   f.event.senderFrame.url = 'https://untrusted.example'; assert.equal((await f.invoke('live:catalog')).ok, false);
   f.event.senderFrame.url = expected;
-  assert.deepEqual(await f.invoke('live:catalog', { refresh: true }), { ok: true, data: { refreshed: true, appearance: { workMode: true } } });
+  assert.deepEqual(await f.invoke('live:catalog', { refresh: true }), { ok: true, data: { refreshed: true, appearance: { workMode: true }, workspace: process.cwd() } });
   assert.equal(f.getPrepared(), 1);
   assert.equal(f.win.options.webPreferences.sandbox, true);
   assert.equal(f.win.options.webPreferences.contextIsolation, true);

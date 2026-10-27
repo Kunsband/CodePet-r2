@@ -6,6 +6,15 @@
   let catalog = null, current = null, loading = false, ending = false, settingsBusy = false, selection = {};
   try { selection = JSON.parse(localStorage.getItem('codepet.live.selection') || '{}'); } catch {}
   if (!selection || typeof selection !== 'object' || Array.isArray(selection)) selection = {};
+  const permissions = { ask: '명령과 작업에 대해 승인을 요청합니다.', auto: '일반 작업은 자동으로 진행하고 추가 권한이 필요하면 승인을 요청합니다.', full: '컴퓨터의 파일과 인터넷에 제한 없이 접근합니다.' };
+  if (!Object.hasOwn(permissions, selection.permission)) selection.permission = 'ask';
+  let approvalQueue = [], workspace = '';
+  function showApproval() {
+    if (!approvalQueue.length || !current) { if ($('approval').open) $('approval').close(); return; }
+    $('approval-detail').textContent = approvalQueue[0].detail;
+    $('approval-accept').disabled = approvalQueue[0].canApprove === false;
+    if (!$('approval').open) $('approval').showModal();
+  }
   const valueOf = async promise => {
     const result = await promise;
     if (!result?.ok) throw new Error(result?.error || '요청을 처리하지 못했습니다.');
@@ -49,6 +58,7 @@
     loading = true; setError(); status('연결 정보를 확인하는 중…', 'idle'); update();
     try {
       catalog = await valueOf(liveApi.catalog(refresh));
+      workspace = catalog.workspace; $('workspace').textContent = workspace;
       if (!catalog.models.some(m => m.id === selection.model)) selection.model = catalog.defaultModel;
       if (!catalog.voices.some(v => v.id === selection.voice)) selection.voice = catalog.defaultVoice;
       $('model').replaceChildren(...catalog.models.map(model => new Option(model.label, model.id)));
@@ -71,6 +81,7 @@
   }
   async function end(message = '음성 대화가 종료됐어요') {
     const previous = current; current = null;
+    approvalQueue = []; showApproval();
     if (previous) cleanup(previous);
     if (previous) ending = true;
     status(message, 'ended'); update();
@@ -165,7 +176,7 @@
       });
       if (current !== session) return;
       animate(session);
-      await valueOf(liveApi.start({ key: session.key, model: selection.model, voice: selection.voice, sdp: pc.localDescription.sdp }));
+      await valueOf(liveApi.start({ key: session.key, model: selection.model, voice: selection.voice, permission: selection.permission, sdp: pc.localDescription.sdp }));
       if (current !== session) await liveApi.stop(session.key);
     } catch (error) { await fail(session, error); }
   }
@@ -178,6 +189,7 @@
       else if (event.type === 'error') await fail(session, new Error(event.message));
       else if (event.type === 'closed') await end();
       else if (event.type === 'notice') setError(event.message);
+      else if (event.type === 'approval') { approvalQueue.push(event); showApproval(); }
       else if (event.type === 'transcript' && ['user','assistant'].includes(event.role)) {
         const caption = $('caption-' + event.role);
         if (event.done || session.captionsDone[event.role]) caption.textContent = '';
@@ -204,16 +216,68 @@
     catch (error) { setError(error.message); }
     finally { session.sending = false; update(); }
   });
-  const openSettings = () => { $('model').value = selection.model || ''; $('voice').value = selection.voice || ''; $('settings').showModal(); };
+  async function selectHistory(id) {
+    if (current) await end();
+    const result = await valueOf(liveApi.historySelect(id));
+    if (result.cwd) { workspace = result.cwd; $('workspace').textContent = workspace; }
+    const messages = result.messages || [];
+    $('history-messages').replaceChildren(...messages.map(message => {
+      const p = document.createElement('p'), strong = document.createElement('strong');
+      strong.textContent = message.role === 'user' ? '나' : 'Live';
+      p.append(strong, document.createElement('br'), document.createTextNode(message.text)); return p;
+    }));
+    if (id && !messages.length) $('history-messages').textContent = '저장된 대화 내용이 없습니다.';
+    $('history-continue').hidden = !id;
+    if (!id) { $('history').close(); status('새 대화를 시작해 보세요', 'idle'); }
+    else status('선택한 대화를 이어갈 수 있어요', 'idle');
+  }
+  $('history-open').addEventListener('click', async () => {
+    try {
+      const list = await valueOf(liveApi.historyList());
+      $('history-messages').replaceChildren();
+      $('history-continue').hidden = true;
+      $('history-list').replaceChildren(...list.map(item => {
+        const button = document.createElement('button'), date = document.createElement('small');
+        button.type = 'button'; button.className = 'history-item'; button.textContent = item.title;
+        date.textContent = new Date(item.updatedAt).toLocaleString(); button.append(date);
+        button.addEventListener('click', () => { void selectHistory(item.id).catch(error => setError(error.message)); }); return button;
+      }));
+      if (!list.length) $('history-messages').textContent = '저장된 대화가 없습니다.';
+      $('history').showModal();
+    } catch (error) { setError(error.message); }
+  });
+  $('history-close').addEventListener('click', () => $('history').close());
+  $('history-continue').addEventListener('click', () => { $('history').close(); void start(); });
+  $('history-new').addEventListener('click', () => { void selectHistory(null).catch(error => setError(error.message)); });
+  const openSettings = () => { $('model').value = selection.model || ''; $('voice').value = selection.voice || ''; $('permission').value = selection.permission; $('permission-description').textContent = permissions[selection.permission]; $('settings').showModal(); };
+  $('permission').addEventListener('change', () => { $('permission-description').textContent = permissions[$('permission').value]; });
+  $('workspace-choose').addEventListener('click', async () => {
+    try {
+      const result = await valueOf(liveApi.chooseWorkspace());
+      if (result.canceled) return;
+      const changed = workspace !== result.workspace;
+      workspace = result.workspace; $('workspace').textContent = workspace;
+      if (changed && current) { await end(); await start(); }
+    } catch (error) { setError(error.message); }
+  });
+  async function answerApproval(approve) {
+    const item = approvalQueue[0], session = current;
+    if (!item || !session) return;
+    try { await valueOf(liveApi.approval(session.key, item.id, approve)); approvalQueue.shift(); } catch (error) { setError(error.message); }
+    showApproval();
+  }
+  $('approval-accept').addEventListener('click', () => answerApproval(true));
+  $('approval-deny').addEventListener('click', () => answerApproval(false));
+  $('approval').addEventListener('cancel', event => { event.preventDefault(); void answerApproval(false); });
   $('settings-open').addEventListener('click', openSettings);
   $('settings-summary').addEventListener('click', openSettings);
   $('settings-close').addEventListener('click', () => $('settings').close());
   $('reload-catalog').addEventListener('click', () => loadCatalog(true));
   $('settings-form').addEventListener('submit', async event => {
     event.preventDefault();
-    const next = { model: $('model').value, voice: $('voice').value };
-    if (!catalog?.models.some(m => m.id === next.model) || !catalog.voices.some(v => v.id === next.voice)) return;
-    const restart = !!current && (next.model !== selection.model || next.voice !== selection.voice);
+    const next = { model: $('model').value, voice: $('voice').value, permission: $('permission').value };
+    if (!catalog?.models.some(m => m.id === next.model) || !catalog.voices.some(v => v.id === next.voice) || !Object.hasOwn(permissions, next.permission)) return;
+    const restart = !!current && (next.model !== selection.model || next.voice !== selection.voice || next.permission !== selection.permission);
     selection = next;
     try { localStorage.setItem('codepet.live.selection', JSON.stringify(next)); } catch {}
     $('settings').close(); settingsBusy = true; update();
