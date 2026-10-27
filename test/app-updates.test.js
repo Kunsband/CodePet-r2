@@ -97,3 +97,19 @@ test("download IPC reports unavailable updates and browser errors without throwi
     assert.equal(calls, currentVersion === "1.0.12" ? 1 : 0);
   }
 });
+
+test("portable update IPC uses trusted metadata, exposes progress and never opens a browser", async () => {
+  const handlers = new Map(), installed = [];
+  const checker = new AppUpdateChecker({ currentVersion: "1.0.12", platform: "win32", arch: "x64", fetchImpl: async () => response(release()) });
+  const updater = { supported: true, state: { phase: "downloading", percent: 42 }, install: async value => installed.push(value) };
+  registerUpdateIpc({ checker, updater, ipcMain: { handle: (name, fn) => handlers.set(name, fn) }, shell: { openExternal: () => { throw new Error("must not open browser"); } } });
+  const state = await handlers.get("settings:check-update")();
+  assert.equal(state.automatic, true);
+  assert.deepEqual(state.update, updater.state);
+  assert.equal(state.asset, undefined); assert.equal(state.checksumUrl, undefined); assert.equal(state.downloadUrl, undefined);
+  assert.deepEqual(await handlers.get("settings:download-update")({}, { asset: { url: "file:///untrusted" } }), { ok: true, restarting: true });
+  assert.equal(installed[0].asset.url, `${root}/download/v1.0.13/CodePet-1.0.13.exe`);
+  updater.install = async () => { throw new Error("integrity failure"); };
+  const error = await handlers.get("settings:download-update")();
+  assert.equal(error.ok, false); assert.match(error.error, /기존 버전은 유지/);
+});

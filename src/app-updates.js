@@ -20,19 +20,27 @@ function isNewerStableVersion(latest, current) {
   return Boolean(installed.prerelease);
 }
 
-function downloadTarget(release, platform, arch) {
+function releaseAsset(release, name) {
+  const expected = `${RELEASE_ROOT}/download/${encodeURIComponent(release.tag_name)}/${encodeURIComponent(name)}`;
+  const asset = Array.isArray(release.assets) && release.assets.find(item => item.name === name && item.browser_download_url === expected);
+  return asset ? { name, url: expected, size: asset.size } : null;
+}
+
+function nativeAsset(release, platform, arch) {
   const version = parseVersion(release.tag_name)?.version;
-  const tag = encodeURIComponent(release.tag_name);
   const names = platform === "win32"
     ? [`CodePet-${version}-${arch}.exe`, ...(arch === "x64" ? [`CodePet-${version}.exe`] : [])]
     : platform === "darwin" ? [`CodePet-${version}-mac-universal.dmg`, `CodePet-${version}-mac-${arch}.dmg`]
       : platform === "linux" ? [`CodePet-${version}-${arch === "x64" ? "x86_64" : arch}.AppImage`] : [];
   for (const name of names) {
-    const expected = `${RELEASE_ROOT}/download/${tag}/${encodeURIComponent(name)}`;
-    const asset = Array.isArray(release.assets) && release.assets.find(item => item.name === name && item.browser_download_url === expected);
-    if (asset) return expected;
+    const asset = releaseAsset(release, name);
+    if (asset) return asset;
   }
-  return `${RELEASE_ROOT}/tag/${tag}`;
+  return null;
+}
+
+function downloadTarget(release, platform, arch) {
+  return nativeAsset(release, platform, arch)?.url || `${RELEASE_ROOT}/tag/${encodeURIComponent(release.tag_name)}`;
 }
 
 class AppUpdateChecker {
@@ -68,7 +76,8 @@ class AppUpdateChecker {
       const available = isNewerStableVersion(release.tag_name, this.currentVersion);
       result = { currentVersion: this.currentVersion, latestVersion: version.version,
         status: available ? "available" : "up-to-date",
-        ...(available ? { downloadUrl: downloadTarget(release, this.platform, this.arch) } : {}) };
+        ...(available ? { downloadUrl: downloadTarget(release, this.platform, this.arch),
+          asset: nativeAsset(release, this.platform, this.arch), checksumUrl: releaseAsset(release, "SHA256SUMS")?.url } : {}) };
     } catch {
       result = { currentVersion: this.currentVersion, status: "unavailable" };
     }
@@ -78,19 +87,25 @@ class AppUpdateChecker {
   }
 }
 
-function registerUpdateIpc({ ipcMain, shell, checker }) {
+function registerUpdateIpc({ ipcMain, shell, checker, updater }) {
   ipcMain.handle("settings:check-update", async () => {
-    const { downloadUrl: _privateUrl, ...result } = await checker.check();
-    return result;
+    const { currentVersion, latestVersion, status } = await checker.check();
+    return { currentVersion, latestVersion, status, automatic: Boolean(updater?.supported), update: updater?.state };
   });
   ipcMain.handle("settings:download-update", async () => {
     const result = await checker.check();
     if (result.status !== "available") return { ok: false, error: "지금 다운로드할 새 버전을 확인하지 못했습니다." };
     try {
+      if (updater?.supported) {
+        await updater.install(result);
+        return { ok: true, restarting: true };
+      }
       await shell.openExternal(result.downloadUrl);
       return { ok: true };
     } catch {
-      return { ok: false, error: "다운로드 링크를 열지 못했습니다. 잠시 후 다시 시도해 주세요." };
+      return { ok: false, error: updater?.supported
+        ? "업데이트를 적용하지 못했습니다. 기존 버전은 유지됩니다. 저장 공간과 폴더 쓰기 권한, 네트워크를 확인하고 다시 시도해 주세요."
+        : "다운로드 링크를 열지 못했습니다. 잠시 후 다시 시도해 주세요." };
     }
   });
 }

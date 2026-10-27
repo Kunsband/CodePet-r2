@@ -63,6 +63,7 @@ const {
 const { createChatFeature } = require("./chat/chat-ipc");
 const { buildWindowsCodexLaunchScript } = require("./codex-desktop-launch");
 const { AppUpdateChecker, registerUpdateIpc } = require("./app-updates");
+const { AppUpdateInstaller, acknowledgeUpdateStartup } = require("./app-update-installer");
 const { getInstalledFonts } = require("./installed-fonts");
 const {
   isLinuxAutoLaunchEnabled,
@@ -3290,6 +3291,7 @@ function createWindow() {
 
   petWindow.once("ready-to-show", showPetWindowOnce);
   petWindow.webContents.once("did-finish-load", () => {
+    acknowledgeUpdateStartup();
     createdPetWindow.webContents.send(IPC_CHANNELS.SET_VISIBLE, createdPetWindow.isVisible());
     setTimeout(showPetWindowOnce, 250);
   });
@@ -3458,7 +3460,11 @@ function registerIpcHandlers() {
     console.warn("[desktop-pet] Unknown bubble action ignored.", actionId);
   });
 
-  registerUpdateIpc({ ipcMain, shell, checker: new AppUpdateChecker({ currentVersion: app.getVersion() }) });
+  const updater = new AppUpdateInstaller({ app });
+  updater.on("progress", (state) => {
+    if (settingsWindow && !settingsWindow.isDestroyed()) settingsWindow.webContents.send("settings:update-progress", state);
+  });
+  registerUpdateIpc({ ipcMain, shell, checker: new AppUpdateChecker({ currentVersion: app.getVersion() }), updater });
   ipcMain.handle("settings:get", async () => ({
     ok: true,
     data: await getSettingsData(),
@@ -3591,6 +3597,10 @@ function registerIpcHandlers() {
 
 // 앱 수명주기 진입점입니다.
 if (!relaunchingForX11) app.whenReady().then(() => {
+  if (process.env.CODEPET_UPDATE_FAILED === "1") {
+    delete process.env.CODEPET_UPDATE_FAILED;
+    dialog.showErrorBox("업데이트 실패", "새 버전을 시작하지 못해 기존 버전으로 복구했습니다. 잠시 후 다시 시도해 주세요.");
+  }
   // macOS에서는 데스크톱 펫이 Dock에 남아 있을 이유가 없어 메뉴바(트레이)로만 동작하게 합니다.
   if (process.platform === "darwin" && app.dock) {
     app.dock.hide();

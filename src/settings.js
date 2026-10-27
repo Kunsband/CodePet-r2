@@ -709,30 +709,54 @@ function registerUpdateControls() {
   const button = $("#download-update");
   const version = $("#app-version");
   let checking = false;
+  let busy = false;
+  let currentVersion = version.textContent;
+  let actionLabel = "새 버전 다운로드";
+  function renderProgress(update) {
+    busy = ["downloading", "verifying", "restarting"].includes(update?.phase);
+    button.disabled = busy;
+    button.setAttribute("aria-busy", String(busy));
+    const label = update?.phase === "downloading" ? `다운로드 ${update.percent || 0}%`
+      : update?.phase === "verifying" ? "파일 확인 중…"
+        : update?.phase === "restarting" ? "재시작 중…" : null;
+    version.textContent = label || currentVersion;
+    button.title = label || actionLabel;
+    button.setAttribute("aria-label", button.title);
+    if (busy) button.hidden = false;
+  }
   async function refresh() {
-    if (checking) return;
+    if (checking || busy) return;
     checking = true;
     try {
       const result = await api.checkUpdate();
-      if (result?.currentVersion) version.textContent = `VERSION ${result.currentVersion}`;
+      if (result?.currentVersion) currentVersion = `VERSION ${result.currentVersion}`;
+      if (busy) return;
       button.hidden = result?.status !== "available";
       if (!button.hidden) {
-        const label = `새 버전 ${result.latestVersion} 다운로드`;
-        button.title = label;
-        button.setAttribute("aria-label", label);
+        actionLabel = result.automatic ? `새 버전 ${result.latestVersion} 업데이트 후 재시작` : `새 버전 ${result.latestVersion} 다운로드`;
       }
+      renderProgress(result?.update);
     } catch {
       button.hidden = true;
     } finally { checking = false; }
   }
   button.addEventListener("click", async () => {
-    button.disabled = true;
+    if (busy) return;
+    renderProgress({ phase: "downloading", percent: 0 });
     try {
       const result = await api.downloadUpdate();
-      if (!result?.ok) showError(responseError(result, "다운로드 링크를 열지 못했습니다."));
-    } catch { showError("다운로드 링크를 열지 못했습니다."); }
-    finally { button.disabled = false; }
+      if (!result?.ok) {
+        renderProgress({ phase: "error" });
+        showError(responseError(result, "업데이트를 시작하지 못했습니다."));
+      } else {
+        renderProgress({ phase: result.restarting ? "restarting" : "idle" });
+      }
+    } catch {
+      renderProgress({ phase: "error" });
+      showError("업데이트를 시작하지 못했습니다. 다시 시도해 주세요.");
+    }
   });
+  api.onUpdateProgress?.(renderProgress);
   window.addEventListener("focus", refresh);
   void refresh();
 }
