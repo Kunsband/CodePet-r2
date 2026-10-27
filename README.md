@@ -69,7 +69,7 @@ Attachments are copied into the session. Images can be delivered to Codex and, w
 Right-click the pet or tray icon and choose **Live 음성 대화…**. Sign in to the installed Codex CLI with a ChatGPT account, then press Start in Live. Use the microphone button to mute, type into the message box during a call, or end the call with the stop button. Closing the window also releases the microphone.
 
 - **Conversations:** Select a conversation in the left sidebar to view its saved messages and continue it, or choose **새 대화** to start a new one. In narrow windows, use the menu button to open the sidebar.
-- **Projects:** Each conversation keeps its own project folder. New conversations default to your user home directory, such as `C:\Users\<username>` on Windows. Click the project path above the conversation to open settings and choose another folder.
+- **Projects:** Each conversation keeps its own project folder. New conversations default to the empty dedicated folder `~/.codepet/live/workspace` (a change in this fork; upstream uses your home directory). Click the project path above the conversation to open settings and choose another folder.
 - **Permissions:** Choose **승인 요청** to request approval for untrusted commands and additional access, **나 대신 승인** to allow ordinary workspace operations and request approval for extra access, or **전체 권한** for unrestricted file and network access. Approval requests appear inside Live. Changing permissions reconnects the call.
 - **Delete:** Click **×** beside a conversation and confirm to delete its saved messages and dedicated Codex thread. Deleting an active conversation also ends its call.
 
