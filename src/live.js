@@ -219,8 +219,12 @@
     event.preventDefault(); const session = current, text = $('message').value.trim();
     if (!session?.connected || session.sending || !text) return;
     session.sending = true; update();
-    try { await valueOf(liveApi.text(session.key, text)); if ($('message').value.trim() === text) $('message').value = ''; appendHistoryMessage({ role: 'user', text }); void refreshHistory(); }
-    catch (error) { setError(error.message); }
+    try {
+      await valueOf(liveApi.text(session.key, text));
+      if (current !== session) return;
+      if ($('message').value.trim() === text) $('message').value = '';
+      appendHistoryMessage({ role: 'user', text }); void refreshHistory();
+    } catch (error) { if (current === session) setError(error.message); }
     finally { session.sending = false; update(); }
   });
   function appendHistoryMessage(message) {
