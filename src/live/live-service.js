@@ -7,6 +7,7 @@ const { redactSensitiveText } = require('../chat/chat-run-diagnostics');
 
 const selectionId = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-9._:/-]{0,127}$/.test(value);
 const sessionKey = value => typeof value === 'string' && /^[a-zA-Z0-9-]{1,100}$/.test(value);
+const MODES = { ask: ['workspace-write', 'untrusted'], auto: ['workspace-write', 'on-request'], full: ['danger-full-access', 'never'] };
 function publicError(error) { return redactSensitiveText(String(error?.message || error || '음성 연결에 실패했습니다.')).slice(0, 1200); }
 function catalogFrom(models, voices, config = {}) {
   const modelOptions = models.filter(item => !item.hidden && selectionId(item.model)).map(item => ({
@@ -43,6 +44,7 @@ class LiveService extends EventEmitter {
     this.preparing = null;
     this.pendingStart = null;
     this.stopping = null;
+    this.approvals = new Map();
   }
   async prepare(force = false) {
     const account = this.getAccount();
@@ -71,14 +73,21 @@ class LiveService extends EventEmitter {
     this.rpc = rpc; this.prepared = prepared; this.identity = identity;
     rpc.on('notification', message => this.notification(message));
     rpc.on('request', message => {
-      // Live has no file/workspace permission UI. Never silently approve an escalation.
+      const params = message.params || {};
+      if (this.call && params.threadId === this.call.threadId && ['item/commandExecution/requestApproval', 'item/fileChange/requestApproval', 'item/permissions/requestApproval'].includes(message.method)) {
+        const id = String(message.id);
+        this.approvals.set(id, { rpc, message });
+        this.emit('event', { key: this.call.key, type: 'approval', id,
+          canApprove: !Array.isArray(params.availableDecisions) || params.availableDecisions.includes('accept'),
+          detail: publicError([params.reason, params.command, params.cwd, params.grantRoot, params.permissions && JSON.stringify(params.permissions), params.networkApprovalContext && JSON.stringify(params.networkApprovalContext)].filter(Boolean).join('\n') || '작업 실행 권한을 요청했습니다.') });
+        return;
+      }
       let result;
       if (message.method === 'item/commandExecution/requestApproval' || message.method === 'item/fileChange/requestApproval') result = { decision: 'decline' };
       else if (message.method === 'item/permissions/requestApproval') result = { permissions: {}, scope: 'turn' };
       else if (message.method === 'item/tool/requestUserInput') result = { answers: {} };
       if (result) rpc.send({ id: message.id, result });
       else rpc.send({ id: message.id, error: { code: -32601, message: 'This Live client does not support this request.' } });
-      if (this.call) this.emit('event', { key: this.call.key, type: 'notice', message: '이 작업은 에이전트 채팅방에서 권한을 확인한 뒤 진행해 주세요.' });
     });
     rpc.on('closed', error => {
       if (this.rpc !== rpc) return;
@@ -120,18 +129,23 @@ class LiveService extends EventEmitter {
     const catalog = await this.prepare();
     if (pending.cancelled) throw new Error('연결이 취소되었습니다.');
     if (!catalog.models.some(m => m.id === input.model) || !catalog.voices.some(v => v.id === input.voice)) throw new Error('모델 또는 음성을 다시 선택해 주세요.');
+    if (input.permission !== undefined && !Object.hasOwn(MODES, input.permission)) throw new Error('권한 단계를 다시 선택해 주세요.');
+    const cwd = input.workspace || path.join(this.root, 'conversation');
+    if (input.workspace && (!path.isAbsolute(cwd) || !fs.statSync(cwd).isDirectory())) throw new Error('작업 폴더를 확인할 수 없습니다.');
+    if (!input.workspace) fs.mkdirSync(cwd, { recursive: true });
+    if (this.threadWorkspace !== cwd) this.thread = null;
     const call = { key: input.key, threadId: null };
     this.call = call;
     const rpc = this.rpc;
-    const cwd = path.join(this.root, 'conversation');
-    fs.mkdirSync(cwd, { recursive: true });
     try {
-      const params = { model: input.model, cwd, sandbox: 'read-only', approvalPolicy: 'untrusted',
-        developerInstructions: 'This is a voice conversation. Respect existing permissions. Do not perform workspace modifications; direct requests requiring permissions to the agent chat.' };
+      const [sandbox, approvalPolicy] = MODES[input.permission || 'ask'];
+      const params = { model: input.model, cwd, sandbox, approvalPolicy,
+        developerInstructions: 'This is a voice conversation. Respect the configured permissions and user approval decisions.' };
       const response = await rpc.request(this.thread ? 'thread/resume' : 'thread/start', {
         ...params, ...(this.thread ? { threadId: this.thread, excludeTurns: true } : {}),
       });
       this.thread = response.thread.id;
+      this.threadWorkspace = cwd;
       call.threadId = this.thread;
       if (this.call !== call || pending.cancelled) throw new Error('연결이 취소되었습니다.');
       await rpc.request('thread/realtime/start', {
@@ -154,7 +168,7 @@ class LiveService extends EventEmitter {
     const emit = data => this.emit('event', { key: call.key, ...data });
     if (method === 'thread/realtime/sdp') emit({ type: 'sdp', sdp: params.sdp });
     else if (method === 'thread/realtime/error') { emit({ type: 'error', message: publicError(params.message) }); void this.stop(call.key); }
-    else if (method === 'thread/realtime/closed') { if (this.pendingStart) this.pendingStart.cancelled = true; this.call = null; emit({ type: 'closed' }); }
+    else if (method === 'thread/realtime/closed') { if (this.pendingStart) this.pendingStart.cancelled = true; this.clearApprovals(); this.call = null; emit({ type: 'closed' }); }
     else if (method === 'thread/realtime/transcript/delta' || method === 'thread/realtime/transcript/done') {
       if (params.role === 'user' || params.role === 'assistant') emit({ type: 'transcript', role: params.role,
         done: method.endsWith('/done'), text: String(params.text ?? params.delta ?? '').slice(-12000) });
@@ -165,6 +179,24 @@ class LiveService extends EventEmitter {
     if (typeof text !== 'string' || !text.trim() || text.length > 8000) throw new Error('메시지는 1~8,000자까지 입력할 수 있습니다.');
     await this.rpc.request('thread/realtime/appendText', { threadId: this.call.threadId, text: text.trim() });
   }
+  respondApproval({ key, id, approve }) {
+    const pending = this.approvals.get(String(id));
+    if (!this.call || this.call.key !== key || !pending || typeof approve !== 'boolean') throw new Error('만료된 권한 요청입니다.');
+    if (approve && Array.isArray(pending.message.params?.availableDecisions) && !pending.message.params.availableDecisions.includes('accept')) throw new Error('이 요청은 여기서 승인할 수 없습니다.');
+    this.approvals.delete(String(id));
+    const { rpc, message } = pending;
+    const result = message.method === 'item/permissions/requestApproval'
+      ? { permissions: approve ? message.params.permissions : {}, scope: 'turn' }
+      : { decision: approve ? 'accept' : 'decline' };
+    rpc.send({ id: message.id, result });
+  }
+  clearApprovals() {
+    for (const { rpc, message } of this.approvals.values()) {
+      const result = message.method === 'item/permissions/requestApproval' ? { permissions: {}, scope: 'turn' } : { decision: 'decline' };
+      try { if (!rpc.closed) rpc.send({ id: message.id, result }); } catch {}
+    }
+    this.approvals.clear();
+  }
   async stop(key) {
     const pending = this.pendingStart;
     if (pending?.key === key) {
@@ -173,6 +205,7 @@ class LiveService extends EventEmitter {
     }
     const call = this.call;
     if (!call || call.key !== key) return;
+    this.clearApprovals();
     this.call = null;
     if (call.threadId && this.rpc && !this.rpc.closed) {
       const stopping = this.rpc.request('thread/realtime/stop', { threadId: call.threadId }, 5000).catch(() => {});
@@ -182,6 +215,7 @@ class LiveService extends EventEmitter {
   }
   resetConnection() {
     this.epoch++;
+    this.clearApprovals();
     this.preparing = null;
     const rpc = this.rpc; this.rpc = null; this.call = null; this.catalog = null; this.thread = null;
     rpc?.close();

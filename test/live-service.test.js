@@ -57,7 +57,7 @@ test('start validates actual selections, forwards SDP and limits untrusted permi
   const start = f.requests.find(r => r.method === 'thread/realtime/start');
   assert.equal(start.params.transport.sdp, input('call-a').sdp);
   assert.equal(start.params.voice, 'server-voice'); assert.equal(start.params.model, undefined);
-  assert.equal(f.requests.find(r => r.method === 'thread/start').params.sandbox, 'read-only');
+  assert.equal(f.requests.find(r => r.method === 'thread/start').params.sandbox, 'workspace-write');
   const rpc = f.instances[0];
   rpc.emit('notification', { method: 'thread/realtime/sdp', params: { threadId: 'unrelated', sdp: 'ignored' } });
   assert.equal(events.length, 0);
@@ -65,10 +65,37 @@ test('start validates actual selections, forwards SDP and limits untrusted permi
   assert.deepEqual(events[0], { key: 'call-a', type: 'sdp', sdp: 'answer' });
   rpc.emit('request', { id: 4, method: 'item/commandExecution/requestApproval' });
   assert.deepEqual(rpc.lastSent, { id: 4, result: { decision: 'decline' } });
+  rpc.emit('request', { id: 5, method: 'item/commandExecution/requestApproval', params: { threadId: 'thread-1', command: 'echo hi' } });
+  assert.equal(events.at(-1).type, 'approval');
+  f.service.respondApproval({ key: 'call-a', id: '5', approve: true });
+  assert.deepEqual(rpc.lastSent, { id: 5, result: { decision: 'accept' } });
   await f.service.stop('stale-call'); assert.equal(f.service.call.key, 'call-a');
   await f.service.stop('call-a'); assert.equal(f.service.call, null);
   rpc.emit('notification', { method: 'thread/realtime/sdp', params: { threadId: 'thread-1', sdp: 'late' } });
   assert.equal(events.filter(e => e.type === 'sdp').length, 1);
+});
+test('permission levels configure the server and pending approvals are denied on stop', async t => {
+  const f = fixture(t);
+  await f.service.start({ ...input('call-a'), permission: 'full' });
+  const params = f.requests.find(r => r.method === 'thread/start').params;
+  assert.equal(params.sandbox, 'danger-full-access'); assert.equal(params.approvalPolicy, 'never');
+  const rpc = f.instances[0];
+  rpc.emit('request', { id: 8, method: 'item/permissions/requestApproval', params: { threadId: 'thread-1', permissions: { network: { enabled: true } } } });
+  await f.service.stop('call-a');
+  assert.deepEqual(rpc.lastSent, { id: 8, result: { permissions: {}, scope: 'turn' } });
+  await f.service.start({ ...input('call-b'), permission: 'auto' });
+  const resumed = f.requests.find(r => r.method === 'thread/resume').params;
+  assert.equal(resumed.sandbox, 'workspace-write'); assert.equal(resumed.approvalPolicy, 'on-request');
+});
+test('a changed workspace starts a fresh thread with the selected directory', async t => {
+  const f = fixture(t), first = path.join(f.service.root, 'first'), second = path.join(f.service.root, 'second');
+  fs.mkdirSync(first); fs.mkdirSync(second);
+  await f.service.start({ ...input('call-a'), workspace: first });
+  await f.service.stop('call-a');
+  await f.service.start({ ...input('call-b'), workspace: second });
+  const starts = f.requests.filter(r => r.method === 'thread/start');
+  assert.deepEqual(starts.map(r => r.params.cwd), [first, second]);
+  assert.equal(f.requests.some(r => r.method === 'thread/resume'), false);
 });
 test('cancel during capability loading prevents a voice session from starting', async t => {
   const f = fixture(t), gate = deferred(); f.gates.set('model/list', gate);

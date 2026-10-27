@@ -54,7 +54,11 @@ dialog::backdrop { background: #09090b40; }
 .field { display: grid; gap: 7px; margin: 0 0 16px; font-size: 12px; }
 .field select { width: 100%; min-height: 36px; padding: 6px 9px; background: var(--surface); border: 1px solid var(--line-strong); border-radius: 6px; }
 .field output { color: var(--ink-soft); overflow-wrap: anywhere; }
+.workspace-row { display: flex; align-items: center; gap: 8px; }
+.workspace-row output { flex: 1; min-width: 0; }
+.workspace-row button { flex: none; }
 .field small { color: var(--muted); font-size: 11px; line-height: 1.5; }
+#approval-detail { max-height: 40vh; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; font: inherit; }
 .settings-actions { display: flex; gap: 8px; justify-content: flex-end; margin-top: 20px; }
 .button { padding: 7px 14px; min-height: 36px; border: 1px solid var(--line-strong); border-radius: 6px; background: var(--surface); font-weight: 600; }
 .button-primary { color: white; background: var(--accent); border-color: var(--accent); }

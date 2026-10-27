@@ -70,7 +70,7 @@ Right-click the pet or tray icon and choose **Live 음성 대화…**. Sign in t
 
 Conversation models and voices are loaded from the signed-in Codex runtime. Refresh the list in voice settings after ending a call. The voice model uses the server default; its name is shown only when the connection supplies it. Codex currently exposes no selectable language catalog, so Live follows the language you speak.
 
-Live shares the Settings and agent-chat theme. Its window can be resized, with the character capped at 200 pixels. Work mode replaces the character with an animated orb. Live keeps its Codex conversation separate from other chats; permission-dependent workspace work belongs in the agent chat.
+Live shares the Settings and agent-chat theme. Its window can be resized, with the character capped at 200 pixels. Work mode replaces the character with an animated orb. Live keeps its Codex conversation separate from other chats and offers permission levels and approval prompts in its settings.
 
 ## Account switching
 

@@ -46,10 +46,17 @@
       <p class="account-label" id="account-label"></p>
       <label class="field">대화 모델<select id="model" required disabled></select></label>
       <label class="field">음성<select id="voice" required disabled></select></label>
+      <div class="field"><span>작업 폴더</span><div class="workspace-row"><output id="workspace"></output><button type="button" class="button" id="workspace-choose">폴더 선택</button></div></div>
+      <label class="field">에이전트 권한<select id="permission"><option value="ask">승인 요청</option><option value="auto">나 대신 승인</option><option value="full">전체 권한</option></select><small id="permission-description"></small></label>
       <div class="field"><span>음성 모델</span><output id="realtime-model">서버 기본값</output></div>
       <div class="field"><span>언어</span><output id="language">말하는 언어에 맞춤</output></div>
       <div class="settings-actions"><button type="button" class="button" id="reload-catalog">새로고침</button><button class="button button-primary" id="settings-apply" disabled>적용</button></div>
     </form>
+  </dialog>
+  <dialog id="approval" aria-labelledby="approval-title">
+    <h2 id="approval-title">권한 요청</h2>
+    <pre id="approval-detail"></pre>
+    <div class="settings-actions"><button type="button" class="button" id="approval-deny">거부</button><button type="button" class="button button-primary" id="approval-accept">승인</button></div>
   </dialog>
   <audio id="remote-audio" autoplay></audio>
   <script src="live.js"></script>
