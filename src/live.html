@@ -27,11 +27,18 @@
       <button class="titlebar-btn btn-close" id="close" aria-label="닫기"><svg viewBox="0 0 10 10"><path d="m2 2 6 6m0-6L2 8"/></svg></button>
     </div>
   </div>
-  <main class="live-window" data-mode="character" data-state="idle">
-    <header class="live-header"><div class="live-title"><svg><use href="#i-wave"/></svg><h1>Live</h1></div><div class="header-actions"><button class="history-button" id="history-open">대화 기록</button><button class="icon-button" id="settings-open" aria-label="음성 설정"><svg><use href="#i-settings"/></svg></button></div></header>
+  <main class="live-window" data-mode="character" data-state="idle" data-sidebar="open">
+    <aside class="live-sidebar" id="sidebar" aria-label="대화 목록">
+      <div class="sidebar-header"><strong>대화</strong><button type="button" class="history-button" id="history-new">+ 새 대화</button></div>
+      <div id="history-list" class="history-list" aria-label="지난 대화"></div>
+    </aside>
+    <button class="sidebar-backdrop" id="sidebar-backdrop" aria-label="대화 목록 닫기" tabindex="-1"></button>
+    <section class="live-main">
+    <header class="live-header"><div class="live-title"><button class="icon-button sidebar-toggle" id="history-open" aria-label="대화 목록 열기" aria-controls="sidebar" aria-expanded="true">☰</button><svg><use href="#i-wave"/></svg><h1>Live</h1></div><div class="header-actions"><button class="icon-button" id="settings-open" aria-label="음성 설정"><svg><use href="#i-settings"/></svg></button></div></header>
     <div class="conversation">
       <div class="visual-stage"><div class="character" role="img" aria-label="GPT 캐릭터"><div class="character-frame"></div></div><div class="orb" aria-label="음성 상태" role="img"><i></i><i></i></div></div>
       <div class="status" role="status"><span class="status-dot"></span><span id="status">연결 정보를 불러오는 중…</span></div>
+      <div id="history-messages" class="history-messages" aria-label="대화 내용" aria-live="polite" hidden></div>
       <div class="captions"><p id="caption-user"></p><p id="caption-assistant">무엇부터 해볼까요?</p></div>
       <p class="error" id="error" role="alert" hidden></p>
     </div>
@@ -39,6 +46,7 @@
       <div class="live-controls"><button class="icon-button mic-button" id="mute" aria-label="마이크 끄기" aria-pressed="false" disabled><svg><use href="#i-mic"/></svg></button><form id="message-form"><input id="message" aria-label="메시지" placeholder="메시지 입력" maxlength="8000" disabled><button class="send-button" id="send" aria-label="메시지 보내기" disabled><svg><use href="#i-send"/></svg></button></form><button class="icon-button end-button" id="call" aria-label="음성 대화 시작" disabled><svg><use href="#i-play"/></svg></button></div>
       <button class="voice-summary" id="settings-summary"><span id="voice-summary">음성 설정</span><svg><use href="#i-down"/></svg></button>
     </footer>
+    </section>
   </main>
   <dialog id="settings" aria-labelledby="settings-title">
     <header class="settings-header"><h2 id="settings-title">음성 설정</h2><button class="icon-button" id="settings-close" aria-label="설정 닫기"><svg><use href="#i-close"/></svg></button></header>
@@ -57,13 +65,6 @@
     <h2 id="approval-title">권한 요청</h2>
     <pre id="approval-detail"></pre>
     <div class="settings-actions"><button type="button" class="button" id="approval-deny">거부</button><button type="button" class="button button-primary" id="approval-accept">승인</button></div>
-  </dialog>
-  <dialog id="history" aria-labelledby="history-title">
-    <header class="settings-header"><h2 id="history-title">대화 기록</h2><button class="icon-button" id="history-close" aria-label="기록 닫기"><svg><use href="#i-close"/></svg></button></header>
-    <button type="button" class="button" id="history-new">새 대화</button>
-    <div id="history-list" class="history-list"></div>
-    <div id="history-messages" class="history-messages" aria-live="polite"></div>
-    <div class="settings-actions"><button type="button" class="button button-primary" id="history-continue" hidden>이 대화 이어가기</button></div>
   </dialog>
   <audio id="remote-audio" autoplay></audio>
   <script src="live.js"></script>

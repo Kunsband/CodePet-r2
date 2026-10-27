@@ -3,6 +3,8 @@ const assert = require('node:assert/strict');
 const { EventEmitter } = require('node:events');
 const { pathToFileURL } = require('node:url');
 const path = require('node:path');
+const fs = require('node:fs');
+const os = require('node:os');
 const { createLiveFeature } = require('../src/live/live-feature');
 function fixture(t) {
   const handlers = new Map(), service = new EventEmitter(); let disposed = 0, prepared = 0;
@@ -56,4 +58,27 @@ test('only audio is allowed, navigation is blocked, suspend/close dispose the vo
   f.powerMonitor.emit('suspend'); assert.equal(f.getDisposed(), 1);
   await f.invoke('live:window', 'close'); assert.equal(f.getDisposed(), 2); assert.equal(f.feature.getWindow(), null);
   assert.equal(f.win.check(f.win.webContents, 'media', '', { mediaType: 'audio' }), false);
+});
+test('workspace selection applies to the selected conversation and new conversations return to the default', async t => {
+  const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'live-workspace-'));
+  t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
+  const chosen = path.join(dir, 'chosen'); fs.mkdirSync(chosen);
+  const handlers = new Map(), service = new EventEmitter(); let selected = null, started;
+  service.prepare = async () => ({}); service.dispose = () => {};
+  service.setWorkspace = async cwd => { selected = cwd; };
+  service.selectHistory = async id => id ? { id, cwd: chosen, messages: [] } : { messages: [] };
+  service.start = async input => { started = input; };
+  class Window extends EventEmitter {
+    constructor() { super(); this.webContents = new EventEmitter(); this.webContents.mainFrame = {}; this.webContents.session = { setPermissionCheckHandler() {}, setPermissionRequestHandler() {} }; this.webContents.setWindowOpenHandler = () => {}; }
+    isDestroyed() { return false; } loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; }
+  }
+  const feature = createLiveFeature({ electron: { BrowserWindow: Window, ipcMain: { handle: (key, fn) => handlers.set(key, fn) }, dialog: { showOpenDialog: async () => ({ filePaths: [chosen] }) } }, root: dir, defaultWorkspace: dir, getAppearance: () => ({}), makeService: () => service });
+  feature.registerIpcHandlers(); feature.openWindow(); t.after(() => feature.shutdown());
+  const win = feature.getWindow(), event = { sender: win.webContents, senderFrame: win.webContents.mainFrame };
+  await handlers.get('live:workspace:choose')(event);
+  assert.equal(selected, fs.realpathSync(chosen));
+  await handlers.get('live:history:select')(event, { id: 'existing' });
+  await handlers.get('live:start')(event, {}); assert.equal(started.workspace, chosen);
+  await handlers.get('live:history:select')(event, { id: null });
+  await handlers.get('live:start')(event, {}); assert.equal(started.workspace, dir);
 });
