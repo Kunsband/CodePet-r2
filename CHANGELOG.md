@@ -1,5 +1,19 @@
 # Release notes / 릴리즈 노트
 
+## 1.1.7 — 2026-10-27
+
+### English
+
+- Add workspace selection and configurable agent permission levels to Codex Live, plus saved conversation history and continuation.
+- Show complete commands, access paths and requested permissions in approval dialogs, including long requests, while retaining redaction and length limits for error messages.
+- Prevent delayed text acknowledgements from writing into a later call, and decline pending approval requests when voice-session startup fails.
+
+### 한국어
+
+- Codex Live에 작업 폴더 선택과 에이전트 권한 단계 설정, 대화 기록 저장 및 이어가기를 추가했습니다.
+- 긴 승인 요청에서도 명령·접근 경로·요청 권한 전체를 확인할 수 있게 했습니다. 오류 메시지의 민감정보 가림과 길이 제한은 유지합니다.
+- 늦게 도착한 텍스트 전송 응답이 다른 통화 기록에 저장되지 않도록 하고, 음성 연결 시작에 실패하면 대기 중인 승인 요청을 거절하도록 수정했습니다.
+
 ## 1.1.6 — 2026-10-27
 
 ### English
