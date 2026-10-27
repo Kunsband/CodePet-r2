@@ -8,9 +8,14 @@ const profile = fs.mkdtempSync(path.join(os.tmpdir(), 'codepet-live-ui-'));
 app.setPath('userData', profile);
 const id = '00000000-0000-7000-8000-000000000001';
 app.whenReady().then(async () => {
+  let deleted = false, cancelDelete = true;
   ipcMain.handle('live:catalog', () => ({ ok: true, data: { models: [{ id: 'model', label: 'Model' }], voices: [{ id: 'voice', label: 'Voice' }], defaultModel: 'model', defaultVoice: 'voice', workspace: profile } }));
-  ipcMain.handle('live:history:list', () => ({ ok: true, data: [{ id, title: '이전 질문', updatedAt: Date.now() }] }));
-  ipcMain.handle('live:history:select', (_event, input) => ({ ok: true, data: input.id ? { cwd: profile, messages: [{ role: 'user', text: '이전 질문' }, { role: 'assistant', text: '이전 답변' }] } : { messages: [] } }));
+  ipcMain.handle('live:history:list', () => ({ ok: true, data: deleted ? [] : [{ id, title: '이전 질문', updatedAt: Date.now() }] }));
+  ipcMain.handle('live:history:select', (_event, input) => ({ ok: true, data: input.id ? { cwd: profile, messages: [{ role: 'user', text: '이전 질문' }, { role: 'assistant', text: '이전 답변' }] } : { cwd: profile, messages: [] } }));
+  ipcMain.handle('live:history:delete', () => {
+    if (cancelDelete) { cancelDelete = false; return { ok: true, data: { canceled: true } }; }
+    deleted = true; return { ok: true, data: { id, active: true, workspace: profile } };
+  });
   const win = new BrowserWindow({ width: 300, height: 480, show: false, webPreferences: { preload: path.join(__dirname, '../src/live-preload.js'), contextIsolation: true, sandbox: true } });
   await win.loadFile(path.join(__dirname, '../src/live.html'));
   const run = code => win.webContents.executeJavaScript(code);
@@ -22,6 +27,7 @@ app.whenReady().then(async () => {
   await run("document.querySelector('.history-item').click()");
   for (let i = 0; i < 100 && !await run("document.getElementById('history-messages').textContent.includes('이전 답변')"); i++) await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(await run("document.getElementById('history-messages').textContent.includes('이전 답변')"), true);
+  assert.equal(await run("document.getElementById('project-path').textContent"), profile);
   assert.equal(await run("document.querySelector('.live-window').dataset.sidebar"), 'closed');
   assert.equal(await run("document.documentElement.scrollWidth <= innerWidth"), true);
   await run("document.getElementById('history-open').click()");
@@ -30,6 +36,13 @@ app.whenReady().then(async () => {
   win.setSize(700, 700);
   assert.equal(await run("document.getElementById('sidebar').getBoundingClientRect().right < document.querySelector('.live-main').getBoundingClientRect().right"), true);
   fs.writeFileSync(path.join(profile, 'wide.png'), (await win.webContents.capturePage()).toPNG());
+  await run("document.querySelector('.history-delete').click()");
+  await new Promise(resolve => setTimeout(resolve, 60));
+  assert.equal(await run("document.querySelectorAll('.history-item').length"), 1);
+  await run("document.querySelector('.history-delete').click()");
+  for (let i = 0; i < 100 && await run("document.querySelector('.history-item') !== null"); i++) await new Promise(resolve => setTimeout(resolve, 20));
+  assert.equal(await run("document.querySelectorAll('.history-item').length"), 0);
+  assert.equal(await run("document.getElementById('history-messages').hidden"), true);
   await run("document.getElementById('history-new').click()");
   for (let i = 0; i < 100 && !await run("document.getElementById('history-messages').hidden"); i++) await new Promise(resolve => setTimeout(resolve, 20));
   assert.equal(await run("document.getElementById('history-messages').hidden"), true);

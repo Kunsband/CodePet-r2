@@ -488,7 +488,7 @@ let settingsWindow = null;
 const liveFeature = createLiveFeature({
   electron: { BrowserWindow, ipcMain, powerMonitor, dialog },
   root: path.join(os.homedir(), ".codepet", "live"),
-  defaultWorkspace: app.isPackaged ? path.dirname(process.execPath) : app.getAppPath(),
+  defaultWorkspace: os.homedir(),
   getAccount: () => codexAccountSwitcher.getCurrentAccountSummary(),
   getAppearance: () => getAppearancePayload(),
   onWindowReady: () => sendAppearanceToWindows(),

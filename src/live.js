@@ -12,6 +12,12 @@
   if (window.innerWidth <= 600) host.dataset.sidebar = 'closed';
   function sidebar(open) { host.dataset.sidebar = open ? 'open' : 'closed'; $('history-open').setAttribute('aria-expanded', String(open)); }
   sidebar(host.dataset.sidebar === 'open');
+  function showWorkspace(value) {
+    workspace = value;
+    $('workspace').textContent = value;
+    $('project-path').textContent = value;
+    $('project-open').title = value;
+  }
   function showApproval() {
     if (!approvalQueue.length || !current) { if ($('approval').open) $('approval').close(); return; }
     $('approval-detail').textContent = approvalQueue[0].detail;
@@ -61,7 +67,7 @@
     loading = true; setError(); status('연결 정보를 확인하는 중…', 'idle'); update();
     try {
       catalog = await valueOf(liveApi.catalog(refresh));
-      workspace = catalog.workspace; $('workspace').textContent = workspace;
+      showWorkspace(catalog.workspace);
       if (!catalog.models.some(m => m.id === selection.model)) selection.model = catalog.defaultModel;
       if (!catalog.voices.some(v => v.id === selection.voice)) selection.voice = catalog.defaultVoice;
       $('model').replaceChildren(...catalog.models.map(model => new Option(model.label, model.id)));
@@ -240,7 +246,7 @@
   async function selectHistory(id) {
     if (current) await end();
     const result = await valueOf(liveApi.historySelect(id));
-    if (result.cwd) { workspace = result.cwd; $('workspace').textContent = workspace; }
+    if (result.cwd) showWorkspace(result.cwd);
     activeThread = id;
     $('caption-user').textContent = ''; $('caption-assistant').textContent = '';
     $('history-messages').replaceChildren(); $('history-messages').hidden = true;
@@ -255,11 +261,26 @@
       const list = await valueOf(liveApi.historyList());
       if (seq !== historyRequest) return;
       $('history-list').replaceChildren(...list.map(item => {
-        const button = document.createElement('button'), date = document.createElement('small');
+        const row = document.createElement('div'), button = document.createElement('button'), date = document.createElement('small');
+        row.className = 'history-row';
         button.type = 'button'; button.className = 'history-item'; button.textContent = item.title;
         button.setAttribute('aria-current', String(item.id === activeThread));
         date.textContent = new Date(item.updatedAt).toLocaleString(); button.append(date);
-        button.addEventListener('click', () => { void selectHistory(item.id).catch(error => setError(error.message)); }); return button;
+        button.addEventListener('click', () => { void selectHistory(item.id).catch(error => setError(error.message)); });
+        const remove = document.createElement('button');
+        remove.type = 'button'; remove.className = 'history-delete'; remove.textContent = '×';
+        remove.setAttribute('aria-label', `${item.title} 삭제`); remove.title = '대화 삭제';
+        remove.addEventListener('click', async () => {
+          remove.disabled = true;
+          try {
+            const result = await valueOf(liveApi.historyDelete(item.id));
+            if (result.canceled) return;
+            if (activeThread === item.id) { await end(); await selectHistory(null); }
+            else await refreshHistory();
+          } catch (error) { setError(error.message); }
+          finally { remove.disabled = false; }
+        });
+        row.append(button, remove); return row;
       }));
     } catch (error) { setError(error.message); }
   }
@@ -273,7 +294,7 @@
       const result = await valueOf(liveApi.chooseWorkspace());
       if (result.canceled) return;
       const changed = workspace !== result.workspace;
-      workspace = result.workspace; $('workspace').textContent = workspace;
+      showWorkspace(result.workspace);
       if (changed && current) { await end(); await start(); }
     } catch (error) { setError(error.message); }
   });
@@ -287,6 +308,7 @@
   $('approval-deny').addEventListener('click', () => answerApproval(false));
   $('approval').addEventListener('cancel', event => { event.preventDefault(); void answerApproval(false); });
   $('settings-open').addEventListener('click', openSettings);
+  $('project-open').addEventListener('click', openSettings);
   $('settings-summary').addEventListener('click', openSettings);
   $('settings-close').addEventListener('click', () => $('settings').close());
   $('reload-catalog').addEventListener('click', () => loadCatalog(true));

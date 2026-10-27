@@ -62,7 +62,7 @@ async function fixture() {
   await start();
   return { get, start, textGate, historyLists: () => historyLists,
     send: text => { get('message').value = text; return get('message-form').dispatch('submit'); },
-    selectOther: async () => { get('history-list').children[0].dispatch('click'); await tick(); },
+    selectOther: async () => { get('history-list').children[0].children[0].dispatch('click'); await tick(); },
     messages: () => get('history-messages').children.map(child => child.dataset.text),
   };
 }

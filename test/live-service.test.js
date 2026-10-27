@@ -206,6 +206,30 @@ test('each conversation retains its own project folder after changing and switch
   assert.equal(f.requests.at(-2).method, 'thread/resume');
   assert.equal(f.requests.at(-2).params.cwd, second);
 });
+test('deleting an active conversation stops it, deletes the native thread, and keeps it deleted after reconnect', async t => {
+  const f = fixture(t);
+  await f.service.start(input('call-a'));
+  const other = '00000000-0000-7000-8000-000000000002';
+  f.service.history.write({ id: other, cwd: f.service.root, updatedAt: 1, messages: [{ role: 'user', text: 'Keep me' }] });
+  const result = await f.service.deleteHistory(threadId);
+  assert.equal(result.active, true); assert.equal(f.service.call, null); assert.equal(f.service.thread, null);
+  assert.equal(f.requests.some(r => r.method === 'thread/delete' && r.params.threadId === threadId), true);
+  assert.deepEqual((await f.service.listHistory()).map(record => record.id), [other]);
+  f.service.resetConnection();
+  assert.deepEqual((await f.service.listHistory()).map(record => record.id), [other]);
+  await assert.rejects(f.service.selectHistory(threadId), /삭제된/);
+  assert.equal(f.service.history.read(other).messages[0].text, 'Keep me');
+  await assert.rejects(f.service.deleteHistory('../invalid'), /ID/);
+});
+test('a native deletion failure preserves local conversation messages', async t => {
+  const f = fixture(t);
+  await f.service.start(input('call-a')); await f.service.stop('call-a');
+  const rpc = f.instances[0], request = rpc.request.bind(rpc);
+  rpc.request = (method, params) => method === 'thread/delete' ? Promise.reject(new Error('delete failed')) : request(method, params);
+  await assert.rejects(f.service.deleteHistory(threadId), /delete failed/);
+  assert.equal(f.service.history.read(threadId).deletedAt, undefined);
+  assert.equal((await f.service.listHistory()).length, 1);
+});
 test('a changed workspace starts a fresh thread with the selected directory', async t => {
   const f = fixture(t), first = path.join(f.service.root, 'first'), second = path.join(f.service.root, 'second');
   fs.mkdirSync(first); fs.mkdirSync(second);
