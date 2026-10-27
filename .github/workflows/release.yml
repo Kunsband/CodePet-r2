@@ -49,6 +49,7 @@ jobs:
 
   build:
     needs: metadata
+    if: needs.metadata.outputs.publish == 'true'
     strategy:
       fail-fast: false
       matrix:
@@ -160,6 +161,7 @@ jobs:
 
   collect:
     needs: [metadata, build]
+    if: needs.metadata.outputs.publish == 'true'
     runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v4
