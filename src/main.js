@@ -53,6 +53,7 @@ const { rateWindowLabel } = require("./codex-usage-label");
 const { commandNeedsShell, selectCommandPath } = require("./command-resolution");
 const { claudeDesktopCandidates } = require("./claude-command");
 const { UsageMonitor } = require("./usage-monitor");
+const { releaseHiddenWindow } = require("./idle-window-release");
 const { createUsageWindows } = require("./usage-windows");
 const {
   cliCandidates,
@@ -91,6 +92,7 @@ app.commandLine.appendSwitch("disable-features", "CalculateNativeWinOcclusion");
 const IPC_CHANNELS = Object.freeze({
   GET_APP_CONFIG: "pet:get-app-config",
   SET_STATE: "pet:set-state",
+  SET_VISIBLE: "pet:set-visible",
   REQUEST_REACTION: "pet:request-reaction",
   SHOW_CONTEXT_MENU: "pet:show-context-menu",
   DRAG_START: "pet:drag-start",
@@ -950,6 +952,7 @@ function pauseAutoMovement(reason, stateName = "idle") {
   }
 
   runtime.movementPhase = "paused";
+  stopMovementTicks();
   clearTimeout(phaseTimer);
   sendPetState(stateName);
 }
@@ -991,6 +994,8 @@ function beginWalkingPhase() {
   runtime.velocityY = vector.y;
   if (Math.abs(vector.x) >= 0.05) runtime.direction = vector.x > 0 ? 1 : -1;
   runtime.movementPhase = "walking";
+  stopMovementTicks();
+  movementTimer = setInterval(updateMovementTick, MOVEMENT_CONFIG.tickMs);
   ensureRoamingMotionState();
 
   const walkMs = randomBetween(MOVEMENT_CONFIG.minWalkMs, MOVEMENT_CONFIG.maxWalkMs);
@@ -1000,6 +1005,7 @@ function beginWalkingPhase() {
 // 잠시 멈추는 phase를 시작합니다.
 // 이동과 대기를 번갈아 쓰면 펫이 더 자연스럽게 보이고, idle 애니메이션도 확인하기 쉽습니다.
 function beginIdlePhase() {
+  stopMovementTicks();
   if (runtime.manualPaused || hasBlockingPauseReasons()) {
     syncMovementAnimation();
     return;
@@ -1084,8 +1090,13 @@ function initializeWindowGeometry() {
 
 // 자동 이동 타이머를 멈춥니다.
 // 창을 트레이로 숨길 때는 보이지 않는 창을 계속 움직일 필요가 없으므로 타이머를 정리합니다.
-function stopMovementLoop() {
+function stopMovementTicks() {
   clearInterval(movementTimer);
+  movementTimer = null;
+}
+
+function stopMovementLoop() {
+  stopMovementTicks();
   clearTimeout(phaseTimer);
   clearTimeout(reactionTimer);
   movementTimer = null;
@@ -1116,7 +1127,6 @@ function startMovementLoop({ resetPosition = true } = {}) {
   }
 
   beginIdlePhase();
-  movementTimer = setInterval(updateMovementTick, MOVEMENT_CONFIG.tickMs);
 }
 
 // 반응 애니메이션의 재생 시간을 계산합니다.
@@ -1177,6 +1187,7 @@ function toggleManualPause() {
 
   if (runtime.manualPaused) {
     clearTimeout(phaseTimer);
+    stopMovementTicks();
     syncMovementAnimation();
     refreshTrayMenu();
     return;
@@ -3151,6 +3162,7 @@ function createBubbleWindow() {
     },
   });
   const createdWindow = bubbleWindow;
+  releaseHiddenWindow(createdWindow, { canRelease: () => !bubblePendingShow });
 
   createdWindow.setMenuBarVisibility(false);
 
@@ -3278,6 +3290,7 @@ function createWindow() {
 
   petWindow.once("ready-to-show", showPetWindowOnce);
   petWindow.webContents.once("did-finish-load", () => {
+    createdPetWindow.webContents.send(IPC_CHANNELS.SET_VISIBLE, createdPetWindow.isVisible());
     setTimeout(showPetWindowOnce, 250);
   });
 
@@ -3314,6 +3327,7 @@ function createWindow() {
 
   petWindow.on("hide", () => {
     if (petWindow !== createdPetWindow) return;
+    createdPetWindow.webContents.send(IPC_CHANNELS.SET_VISIBLE, false);
     refreshTrayMenu();
     if (isQuitting || petHiddenToTray) return;
 
@@ -3326,6 +3340,7 @@ function createWindow() {
 
   petWindow.on("show", () => {
     if (petWindow !== createdPetWindow) return;
+    createdPetWindow.webContents.send(IPC_CHANNELS.SET_VISIBLE, true);
     petHiddenToTray = false;
     refreshPetSprite({ force: true });
     refreshTrayMenu();
@@ -3603,7 +3618,6 @@ if (!relaunchingForX11) app.whenReady().then(() => {
     { id: "grok", label: "Grok", load: loadGrokProvider },
   ]);
   createWindow();
-  createBubbleWindow();
   usageWindows = createUsageWindows({ electron: { BrowserWindow, ipcMain, screen, powerMonitor },
     monitor: usageMonitor, readSettings, writeSettings, openSettings: openSettingsWindow,
     onVisibilityChange: refreshTrayMenu,
