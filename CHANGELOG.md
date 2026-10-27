@@ -1,5 +1,21 @@
 # Release notes / 릴리즈 노트
 
+## 1.1.3 — 2026-10-27
+
+### English
+
+- Add one-click updates for Windows portable builds: verify release checksums, replace the executable at its existing path, restart, and restore the previous version if startup fails. Install this updater-enabled release manually first when upgrading from an older build without the updater.
+- Show missing Gemini quota for Antigravity accounts while preserving existing quota summaries when the optional lookup fails.
+- Reduce idle filesystem scanning and movement timers, and release hidden UI resources after a grace period.
+- Skip native packaging and intermediate artifact uploads for versions that already have a published release. Make native watcher tests cover recovery from missed filesystem notifications.
+
+### 한국어
+
+- Windows 포터블 버전에 원클릭 업데이트를 추가했습니다. 릴리스 체크섬을 검증하고 기존 경로의 실행 파일을 교체해 재시작하며, 시작에 실패하면 이전 버전으로 복구합니다. 자동 업데이트가 없는 이전 빌드에서는 먼저 이번 버전을 직접 다운로드해 설치해 주세요.
+- Antigravity 계정에서 빠져 있던 Gemini 잔여량을 보완하고, 추가 조회에 실패해도 기존 할당량 요약을 유지합니다.
+- 유휴 상태의 파일 탐색과 이동 타이머를 줄이고, 숨겨진 UI 자원을 일정 시간 후 해제합니다.
+- 이미 공개 릴리스가 있는 버전은 네이티브 패키징과 중간 아티팩트 업로드를 생략합니다. 파일 감시 테스트에 알림 누락 후 복구 검증을 추가했습니다.
+
 ## 1.1.2 — 2026-10-26
 
 ### English
