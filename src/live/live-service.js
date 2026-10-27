@@ -10,6 +10,17 @@ const selectionId = value => typeof value === 'string' && /^[a-zA-Z0-9][a-zA-Z0-
 const sessionKey = value => typeof value === 'string' && /^[a-zA-Z0-9-]{1,100}$/.test(value);
 const MODES = { ask: ['workspace-write', 'untrusted'], auto: ['workspace-write', 'on-request'], full: ['danger-full-access', 'never'] };
 function publicError(error) { return redactSensitiveText(String(error?.message || error || '음성 연결에 실패했습니다.')).slice(0, 1200); }
+function approvalDetail(params) {
+  // This local approval preview must show the exact command and access scope.
+  // Error/log redaction would hide home paths; truncation could hide the action being approved.
+  const fields = [
+    ['명령', params.command], ['작업 폴더', params.cwd], ['접근 허용 경로', params.grantRoot],
+    ['요청 권한', params.permissions], ['네트워크 요청', params.networkApprovalContext], ['사유', params.reason],
+  ];
+  return fields.filter(([, value]) => value !== undefined && value !== null && value !== '')
+    .map(([label, value]) => `${label}:\n${typeof value === 'string' ? value : JSON.stringify(value, null, 2)}`)
+    .join('\n\n') || '작업 실행 권한을 요청했습니다.';
+}
 function catalogFrom(models, voices, config = {}) {
   const modelOptions = models.filter(item => !item.hidden && selectionId(item.model)).map(item => ({
     id: item.model, label: item.displayName || item.model, isDefault: !!item.isDefault,
@@ -81,7 +92,7 @@ class LiveService extends EventEmitter {
         this.approvals.set(id, { rpc, message });
         this.emit('event', { key: this.call.key, type: 'approval', id,
           canApprove: !Array.isArray(params.availableDecisions) || params.availableDecisions.includes('accept'),
-          detail: publicError([params.reason, params.command, params.cwd, params.grantRoot, params.permissions && JSON.stringify(params.permissions), params.networkApprovalContext && JSON.stringify(params.networkApprovalContext)].filter(Boolean).join('\n') || '작업 실행 권한을 요청했습니다.') });
+          detail: approvalDetail(params) });
         return;
       }
       let result;
@@ -163,7 +174,7 @@ class LiveService extends EventEmitter {
       if (this.call !== call || pending.cancelled) throw new Error('연결이 취소되었습니다.');
       return { key: call.key, model: response.model || input.model, threadId: this.thread };
     } catch (error) {
-      if (this.call === call) this.call = null;
+      if (this.call === call) { this.clearApprovals(); this.call = null; }
       if (call.threadId) await rpc.request('thread/realtime/stop', { threadId: call.threadId }, 5000).catch(() => {});
       throw error;
     }
@@ -232,10 +243,11 @@ class LiveService extends EventEmitter {
     return { id, cwd: record.cwd, messages: record.messages };
   }
   async text({ key, text }) {
-    if (!this.call || this.call.key !== key || !this.call.threadId) throw new Error('음성 연결이 종료되었습니다.');
+    const call = this.call;
+    if (!call || call.key !== key || !call.threadId) throw new Error('음성 연결이 종료되었습니다.');
     if (typeof text !== 'string' || !text.trim() || text.length > 8000) throw new Error('메시지는 1~8,000자까지 입력할 수 있습니다.');
-    await this.rpc.request('thread/realtime/appendText', { threadId: this.call.threadId, text: text.trim() });
-    this.saveMessage(this.call, 'user', text.trim());
+    await this.rpc.request('thread/realtime/appendText', { threadId: call.threadId, text: text.trim() });
+    if (this.call === call) this.saveMessage(call, 'user', text.trim());
   }
   respondApproval({ key, id, approve }) {
     const pending = this.approvals.get(String(id));

@@ -4,7 +4,7 @@ const { EventEmitter } = require('node:events');
 const fs = require('node:fs');
 const os = require('node:os');
 const path = require('node:path');
-const { LiveService, catalogFrom } = require('../src/live/live-service');
+const { LiveService, catalogFrom, publicError } = require('../src/live/live-service');
 const deferred = () => { let resolve; const promise = new Promise(r => { resolve = r; }); return { promise, resolve }; };
 const threadId = '00000000-0000-7000-8000-000000000001';
 const input = key => ({ key, model: 'server-model', voice: 'server-voice', sdp: 'v=0\r\ns=fixture\r\n' });
@@ -87,6 +87,95 @@ test('permission levels configure the server and pending approvals are denied on
   await f.service.start({ ...input('call-b'), permission: 'auto' });
   const resumed = f.requests.find(r => r.method === 'thread/resume').params;
   assert.equal(resumed.sandbox, 'workspace-write'); assert.equal(resumed.approvalPolicy, 'on-request');
+});
+test('approval details keep the full command and access paths after a long reason', async t => {
+  const f = fixture(t), events = []; f.service.on('event', event => events.push(event));
+  await f.service.start(input('call-a'));
+  const params = {
+    threadId, reason: 'Reason '.repeat(300) + 'reason-end',
+    command: 'node script.js --output /home/alice/private/result.json',
+    cwd: '/home/alice/project', grantRoot: '/home/bob/shared',
+    networkApprovalContext: { host: 'api.example.test', protocol: 'https' },
+  };
+  f.instances[0].emit('request', { id: 20, method: 'item/commandExecution/requestApproval', params });
+  const approval = events.at(-1);
+  assert.equal(approval.type, 'approval');
+  for (const value of [params.reason, params.command, params.cwd, params.grantRoot, params.networkApprovalContext.host]) {
+    assert.ok(approval.detail.includes(value), 'approval must retain each complete requested value');
+  }
+  assert.equal(f.instances[0].lastSent, undefined, 'showing details must not approve the request');
+  f.service.respondApproval({ key: 'call-a', id: approval.id, approve: false });
+  assert.deepEqual(f.instances[0].lastSent, { id: 20, result: { decision: 'decline' } });
+});
+test('approval details retain long command tails and every requested permission before accepting', async t => {
+  const f = fixture(t), events = []; f.service.on('event', event => events.push(event));
+  await f.service.start(input('call-a'));
+  const command = 'echo ' + 'argument '.repeat(400) + '; rm /home/alice/important.txt';
+  const rpc = f.instances[0];
+  rpc.emit('request', { id: 21, method: 'item/commandExecution/requestApproval', params: { threadId, command } });
+  assert.ok(events.at(-1).detail.includes(command), 'the command tail must remain visible');
+  f.service.respondApproval({ key: 'call-a', id: '21', approve: false });
+  const permissions = { fileSystem: { write: Array.from({ length: 150 }, (_, i) => `/home/alice/project/directory-${i}`) }, network: { enabled: true } };
+  rpc.emit('request', { id: 22, method: 'item/permissions/requestApproval', params: { threadId, permissions } });
+  const detail = events.at(-1).detail;
+  for (const requestedPath of permissions.fileSystem.write) assert.ok(detail.includes(requestedPath));
+  assert.match(detail, /"network"\s*:\s*\{\s*"enabled"\s*:\s*true/);
+  assert.deepEqual(rpc.lastSent, { id: 21, result: { decision: 'decline' } }, 'permissions wait for an explicit decision');
+  f.service.respondApproval({ key: 'call-a', id: '22', approve: true });
+  assert.deepEqual(rpc.lastSent, { id: 22, result: { permissions, scope: 'turn' } });
+});
+test('public errors still redact credentials and home paths and remain length-limited', () => {
+  const message = 'Authorization: Bearer fixture-secret\n/home/alice/private\n' + 'detail '.repeat(300);
+  const result = publicError(new Error(message));
+  assert.equal(result.length, 1200);
+  assert.ok(result.includes('[REDACTED]'));
+  assert.ok(result.includes('~/private'));
+  assert.ok(!result.includes('fixture-secret'));
+  assert.ok(!result.includes('/home/alice'));
+});
+test('a delayed text acknowledgement after stop cannot fail or write into a later call', async t => {
+  const f = fixture(t); await f.service.start(input('call-a'));
+  const originalCall = f.service.call, gate = deferred(); f.gates.set('thread/realtime/appendText', gate);
+  const sending = f.service.text({ key: 'call-a', text: 'message from the old call' });
+  await f.service.stop('call-a');
+  await f.service.start(input('call-b'));
+  const nextCall = f.service.call;
+  gate.resolve(); await sending;
+  assert.equal(f.service.call, nextCall);
+  assert.deepEqual(nextCall.record.messages, []);
+  assert.deepEqual(originalCall.record.messages, []);
+  assert.deepEqual(f.service.history.read(threadId).messages, []);
+});
+test('a delayed text acknowledgement after dispose does not access a cleared call', async t => {
+  const f = fixture(t); await f.service.start(input('call-a'));
+  const gate = deferred(); f.gates.set('thread/realtime/appendText', gate);
+  const sending = f.service.text({ key: 'call-a', text: 'message before dispose' });
+  f.service.dispose(); gate.resolve(); await sending;
+  assert.equal(f.service.call, null);
+});
+test('failed realtime start declines pending approvals before the next call', async t => {
+  const f = fixture(t); await f.service.prepare();
+  const rpc = f.instances[0], gate = deferred(), request = rpc.request.bind(rpc), replies = [];
+  rpc.send = message => replies.push(message);
+  rpc.request = async (method, params) => {
+    if (method === 'thread/realtime/start') { await gate.promise; throw new Error('fixture start failure'); }
+    return request(method, params);
+  };
+  const starting = f.service.start(input('call-a'));
+  const rejected = assert.rejects(starting, /fixture start failure/);
+  while (!f.service.call?.threadId) await new Promise(resolve => setImmediate(resolve));
+  rpc.emit('request', { id: 30, method: 'item/commandExecution/requestApproval', params: { threadId, command: 'echo fixture' } });
+  rpc.emit('request', { id: 31, method: 'item/permissions/requestApproval', params: { threadId, permissions: { network: { enabled: true } } } });
+  gate.resolve(); await rejected;
+  assert.equal(f.service.call, null); assert.equal(f.service.approvals.size, 0);
+  assert.deepEqual(replies, [
+    { id: 30, result: { decision: 'decline' } },
+    { id: 31, result: { permissions: {}, scope: 'turn' } },
+  ]);
+  rpc.request = request;
+  await f.service.start(input('call-b'));
+  assert.throws(() => f.service.respondApproval({ key: 'call-b', id: '30', approve: true }), /만료/);
+  assert.equal(replies.length, 2);
 });
 test('completed transcripts survive reconnection and are supplied when continuing a selected conversation', async t => {
   const f = fixture(t), cwd = f.service.root;
