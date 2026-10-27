@@ -136,6 +136,7 @@ let currentFallbackState = "idle";
 let previousLoopStateName = "idle";
 let currentFrame = 0;
 let animationTimer = null;
+let animationVisible = true;
 let clickTimer = null;
 let lastClickAt = 0;
 
@@ -283,6 +284,7 @@ function scanSpriteFrameOccupancy(image, rows) {
 // 현재 프레임 번호에 맞춰 background-position을 옮깁니다.
 // column은 x축, row는 y축이므로 둘 다 음수 픽셀로 이동해야 원하는 셀이 보입니다.
 function applySpriteFrame() {
+  if (!animationVisible) return;
   const state = getPetState();
   const safeWidth = currentWidth > 0 ? currentWidth : BASE_WIDTH;
   const safeHeight = currentHeight > 0 ? currentHeight : BASE_HEIGHT;
@@ -334,8 +336,15 @@ function restartAnimationTimer() {
   const frameMs = Math.round(1000 / state.fps);
 
   clearInterval(animationTimer);
+  animationTimer = null;
+  if (!animationVisible) return;
   animationTimer = setInterval(advanceFrame, frameMs);
   advanceFrame();
+}
+
+function setAnimationVisibility(visible) {
+  animationVisible = Boolean(visible);
+  restartAnimationTimer();
 }
 
 // 외부에서 요청한 상태로 애니메이션을 전환합니다.
@@ -603,6 +612,7 @@ function registerDomEvents() {
 async function startRenderer() {
   registerDomEvents();
   window.petApi.onStateChange(setAnimationState);
+  window.petApi.onVisibilityChange(setAnimationVisibility);
 
   // 메뉴에서 펫을 바꾸면 스프라이트 이미지만 갈아끼웁니다.
   // 모든 펫이 같은 그리드 규격이라 애니메이션 상태는 그대로 유지됩니다.

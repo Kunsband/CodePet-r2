@@ -5,6 +5,7 @@ const { contextBridge, ipcRenderer } = require("electron");
 const IPC_CHANNELS = Object.freeze({
   GET_APP_CONFIG: "pet:get-app-config",
   SET_STATE: "pet:set-state",
+  SET_VISIBLE: "pet:set-visible",
   REQUEST_REACTION: "pet:request-reaction",
   SHOW_CONTEXT_MENU: "pet:show-context-menu",
   DRAG_START: "pet:drag-start",
@@ -37,6 +38,11 @@ function normalizeScreenPoint(point) {
 // 나중에 Codex 상태 연동을 추가할 때도 이 객체에 requestCodexState 같은 함수를 추가하면 됩니다.
 contextBridge.exposeInMainWorld("petApi", {
   getAppConfig: () => ipcRenderer.invoke(IPC_CHANNELS.GET_APP_CONFIG),
+  onVisibilityChange: (handler) => {
+    const listener = (_event, visible) => handler(visible);
+    ipcRenderer.on(IPC_CHANNELS.SET_VISIBLE, listener);
+    return () => ipcRenderer.removeListener(IPC_CHANNELS.SET_VISIBLE, listener);
+  },
   onStateChange: (handler) => {
     const listener = (_event, stateName) => handler(stateName);
     ipcRenderer.on(IPC_CHANNELS.SET_STATE, listener);

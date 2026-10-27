@@ -3,6 +3,25 @@ const assert = require("node:assert/strict");
 const { createPetMotionHarness } = require("../scripts/lib/pet-motion-harness");
 const { ClaudeWatcher, parseClaudeRow } = require("../src/claude-watcher");
 
+test("movement ticks run only while walking and stop during idle, manual pause, drag, and hiding", () => {
+  const { context: c } = createPetMotionHarness({ manualPaused: false });
+  c.startMovementLoop();
+  assert.equal(c.movementTimer, null);
+  c.beginWalkingPhase();
+  assert.ok(c.movementTimer);
+  c.beginIdlePhase();
+  assert.equal(c.movementTimer, null);
+  c.beginWalkingPhase(); c.toggleManualPause();
+  assert.equal(c.movementTimer, null);
+  c.toggleManualPause(); c.beginWalkingPhase();
+  c.pauseAutoMovement("drag");
+  assert.equal(c.movementTimer, null);
+  c.resumeAutoMovement("drag"); c.beginWalkingPhase();
+  assert.ok(c.movementTimer);
+  c.stopMovementLoop();
+  assert.equal(c.movementTimer, null);
+});
+
 for (const paused of [true, false]) {
   test(`Claude command reaches the working motion with movement paused=${paused}`, () => {
     const watcher = new ClaudeWatcher({ roots: [] });

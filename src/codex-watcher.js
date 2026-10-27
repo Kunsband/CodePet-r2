@@ -2,6 +2,7 @@ const { EventEmitter } = require("node:events");
 const fs = require("node:fs");
 const os = require("node:os");
 const path = require("node:path");
+const { LogFileIndex } = require("./log-file-index");
 
 // Codex CLI는 모든 세션 이벤트를 CODEX_HOME/sessions/YYYY/MM/DD/rollout-*.jsonl에 실시간으로 append합니다.
 // 이 모듈은 최근 rollout 파일들을 tail해서 작업 상태/메시지/사용량(rate_limits)을 이벤트로 발행합니다.
@@ -538,6 +539,7 @@ class CodexWatcher extends EventEmitter {
 
   start() {
     if (this.pollTimer) return;
+    this.fileIndex = new LogFileIndex({ scan: (root) => listRecentRolloutFiles(Infinity, root) });
     this.pollTimer = setInterval(() => this.poll(), WATCHER_CONFIG.pollMs);
     this.poll();
   }
@@ -545,6 +547,8 @@ class CodexWatcher extends EventEmitter {
   stop() {
     clearInterval(this.pollTimer);
     this.pollTimer = null;
+    this.fileIndex?.close();
+    this.fileIndex = null;
   }
 
   // active 프로필과 발견된 프로필들의 sessions 폴더를 모읍니다.
@@ -573,6 +577,10 @@ class CodexWatcher extends EventEmitter {
 
   // 모든 CODEX_HOME의 최근 rollout을 합친 뒤 최신 순서로 tail 대상만 고릅니다.
   listRecentRolloutFiles(limit) {
+    if (this.fileIndex) {
+      return this.fileIndex.read(this.getSessionDirs())
+        .sort((a, b) => b.mtimeMs - a.mtimeMs).slice(0, limit);
+    }
     const files = [];
     for (const sessionsDir of this.getSessionDirs()) {
       files.push(...listRecentRolloutFiles(limit, sessionsDir));
