@@ -7,6 +7,7 @@ const { EventEmitter } = require("node:events");
 const electron = require("electron");
 const { app, BrowserWindow } = electron;
 const { createUsageWindows } = require("../src/usage-windows");
+const { normalizeAgyQuota, normalizeAgyGeminiQuota } = require("../src/provider-usage");
 const output = path.join(__dirname, "..", "artifacts", "usage-smoke");
 app.setPath("userData", path.join(output, "electron-profile"));
 app.disableHardwareAcceleration();
@@ -25,7 +26,14 @@ async function run() {
     { id: "codex", label: "Codex", account: "demo@example.com", plan: "Pro", connected: true, updatedAt: Date.now(),
       gauges: [{ label: "5시간", usedPercent: 24, resetText: "2026-10-15T09:00:00Z" }, { label: "주간", usedPercent: 73, resetText: "2026-10-20T09:00:00Z" }] },
     { id: "agy", label: "AGY", account: "demo@example.com", plan: "Antigravity", connected: true, updatedAt: Date.now(),
-      gauges: [{ label: "Gemini Models · Weekly Limit Remaining", usedPercent: 46 }] },
+      gauges: [
+        ...normalizeAgyQuota({ groups: [{ displayName: "Claude and GPT models", buckets: [
+          { displayName: "Weekly Limit Remaining", remainingFraction: 1, resetTime: "2026-11-03T01:00:00Z" },
+        ] }] }),
+        ...normalizeAgyGeminiQuota({ models: {
+          "gemini-flash": { displayName: "Gemini Flash", quotaInfo: { remainingFraction: 0.54, resetTime: "2026-11-03T01:00:00Z" } },
+        } }),
+      ] },
     { id: "claude", label: "Claude", account: "demo@example.com", connected: true, stale: true, error: "조회 불가", updatedAt: Date.now() - 600000,
       gauges: [{ label: "5시간", usedPercent: 92 }, { label: "7일", usedPercent: 59 }] },
     { id: "grok", label: "Grok", connected: false, error: "로그인 필요", gauges: [] },
@@ -49,13 +57,13 @@ async function run() {
   await until(() => windows().length === 1);
   const popup = windows()[0]; watchErrors(popup);
   await until(() => !popup.webContents.isLoading() && popup.isVisible());
-  await until(() => popup.webContents.executeJavaScript("document.querySelectorAll('progress').length === 5"));
+  await until(() => popup.webContents.executeJavaScript("document.querySelectorAll('progress').length === 6"));
   for (const width of [380, 300]) {
     popup.setBounds({ ...popup.getBounds(), width, height: 560 }); await pause();
     const layout = await popup.webContents.executeJavaScript(`({ width: innerWidth, overflow: document.documentElement.scrollWidth > innerWidth,
       footer: document.querySelector('footer').getBoundingClientRect().bottom > innerHeight,
       error: document.body.innerText.includes('이전 조회값'), progress: document.querySelectorAll('progress').length })`);
-    assert.equal(layout.overflow, false); assert.equal(layout.footer, false); assert.equal(layout.error, true); assert.equal(layout.progress, 5);
+    assert.equal(layout.overflow, false); assert.equal(layout.footer, false); assert.equal(layout.error, true); assert.equal(layout.progress, 6);
     fs.writeFileSync(path.join(output, `popup-${width}.png`), (await popup.webContents.capturePage()).toPNG());
   }
   await popup.webContents.executeJavaScript("document.getElementById('refresh').click()"); await pause();
@@ -64,6 +72,14 @@ async function run() {
   feature.togglePopup(); await until(() => popup.isVisible());
   await popup.webContents.executeJavaScript("document.getElementById('accounts').click()");
   await until(() => settingsOpened); assert.equal(popup.isVisible(), false);
+  rows = rows.filter((row) => row.id === "agy");
+  monitor.emit("update", monitor.snapshot());
+  feature.togglePopup(); await until(() => popup.isVisible());
+  await until(() => popup.webContents.executeJavaScript("document.querySelectorAll('progress').length === 2"));
+  const agyText = await popup.webContents.executeJavaScript("document.getElementById('providers').innerText");
+  assert.ok(agyText.includes("Claude and GPT models") && agyText.includes("Gemini"));
+  assert.ok(agyText.includes("100% 남음") && agyText.includes("54% 남음"));
+  fs.writeFileSync(path.join(output, "agy-gemini.png"), (await popup.webContents.capturePage()).toPNG());
   rows = [{ id: "codex", label: "Codex", connected: false, error: "로그인 필요", gauges: [] }];
   monitor.emit("update", monitor.snapshot()); await pause();
   assert.equal(nativeBar.value.providers[0].connected, false);
@@ -71,7 +87,7 @@ async function run() {
   feature.toggleBar(); assert.equal(nativeBar.visible, true); assert.equal(settings.taskbarUsageVisible, true);
   assert.deepEqual(errors, []);
   feature.dispose();
-  console.log("PASS: no overlay window, native click callback, real Electron popup/preload/IPC, refresh, Escape, accounts, hide/show, 380/300px overflow, stale/empty states; no renderer errors.");
+  console.log("PASS: no overlay window, native click callback, real Electron popup/preload/IPC, refresh, Escape, accounts, hide/show, 380/300px overflow, AGY partner + Gemini quotas, stale/empty states; no renderer errors.");
   app.quit();
 }
 app.whenReady().then(run).catch((error) => { console.error(error); app.exit(1); });

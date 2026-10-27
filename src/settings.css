@@ -260,6 +260,7 @@ input:disabled {
 
 .update-download[hidden] { display: none; }
 .update-download:hover { background: var(--line); border-color: var(--muted); }
+.update-download:disabled { cursor: wait; opacity: 0.6; }
 .update-download svg { width: 16px; height: 16px; }
 
 .workspace {

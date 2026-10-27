@@ -2,6 +2,7 @@ const path = require("node:path");
 const fs = require("node:fs");
 const { avoidWindows } = require("./usage-monitor");
 const { createTaskbar } = require("./windows-taskbar");
+const { releaseHiddenWindow } = require("./idle-window-release");
 
 function createUsageWindows({ electron, monitor, readSettings, writeSettings, openSettings, onVisibilityChange, getObstacles = () => [], taskbarFactory = createTaskbar }) {
   const { BrowserWindow, ipcMain, screen, powerMonitor } = electron;
@@ -44,6 +45,7 @@ function createUsageWindows({ electron, monitor, readSettings, writeSettings, op
       y: target ? target.y - 568 : area.y + area.height - 570 }, getObstacles(), area);
     if (!alive(popup)) {
       popup = makeWindow("popup", bounds);
+      releaseHiddenWindow(popup);
       popup.once("ready-to-show", () => { if (alive(popup)) { popup.show(); popup.focus(); } });
       popup.on("blur", () => { if (alive(popup)) popup.hide(); });
       popup.on("closed", () => { popup = null; });
@@ -56,7 +58,7 @@ function createUsageWindows({ electron, monitor, readSettings, writeSettings, op
   };
   let icon;
   try { icon = fs.readFileSync(path.join(__dirname, "..", "build", "icon.png")); } catch { }
-  const taskbar = taskbarFactory({ icon, onClick: (physicalBounds) => {
+  const taskbar = taskbarFactory({ icon, visible: readSettings().taskbarUsageVisible !== false, onClick: (physicalBounds) => {
     const bounds = process.platform === "win32" ? screen.screenToDipRect(null, physicalBounds) : physicalBounds;
     togglePopup(bounds);
   } });

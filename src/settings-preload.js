@@ -8,6 +8,7 @@ const CHANNELS = Object.freeze({
   USAGE: "settings:usage",
   CHECK_UPDATE: "settings:check-update",
   DOWNLOAD_UPDATE: "settings:download-update",
+  UPDATE_PROGRESS: "settings:update-progress",
   APPEARANCE: "appearance:update",
   NAVIGATE: "settings:navigate",
 });
@@ -20,6 +21,12 @@ contextBridge.exposeInMainWorld("settingsApi", {
   usage: () => ipcRenderer.invoke(CHANNELS.USAGE),
   checkUpdate: () => ipcRenderer.invoke(CHANNELS.CHECK_UPDATE),
   downloadUpdate: () => ipcRenderer.invoke(CHANNELS.DOWNLOAD_UPDATE),
+  onUpdateProgress: (handler) => {
+    if (typeof handler !== "function") return () => {};
+    const listener = (_event, value) => handler(value);
+    ipcRenderer.on(CHANNELS.UPDATE_PROGRESS, listener);
+    return () => ipcRenderer.removeListener(CHANNELS.UPDATE_PROGRESS, listener);
+  },
   onAppearance: (handler) => {
     if (typeof handler !== "function") return () => {};
     const listener = (_event, value) => handler(value);

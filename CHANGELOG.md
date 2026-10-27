@@ -1,5 +1,97 @@
 # Release notes / 릴리즈 노트
 
+## 1.1.8 — 2026-10-27
+
+### English
+
+- Add a responsive conversation sidebar to Codex Live and remember each conversation's project folder when switching or continuing conversations.
+- Keep late text responses and errors from appearing in a different conversation after switching, without clearing that conversation's input.
+
+### 한국어
+
+- Codex Live에 반응형 대화 사이드바를 추가하고, 대화를 전환하거나 이어갈 때 각 대화의 프로젝트 폴더를 기억하도록 했습니다.
+- 대화 전환 후 늦게 도착한 텍스트 응답이나 오류가 다른 대화에 표시되거나 해당 대화의 입력 내용을 지우지 않도록 수정했습니다.
+
+## 1.1.7 — 2026-10-27
+
+### English
+
+- Add workspace selection and configurable agent permission levels to Codex Live, plus saved conversation history and continuation.
+- Show complete commands, access paths and requested permissions in approval dialogs, including long requests, while retaining redaction and length limits for error messages.
+- Prevent delayed text acknowledgements from writing into a later call, and decline pending approval requests when voice-session startup fails.
+
+### 한국어
+
+- Codex Live에 작업 폴더 선택과 에이전트 권한 단계 설정, 대화 기록 저장 및 이어가기를 추가했습니다.
+- 긴 승인 요청에서도 명령·접근 경로·요청 권한 전체를 확인할 수 있게 했습니다. 오류 메시지의 민감정보 가림과 길이 제한은 유지합니다.
+- 늦게 도착한 텍스트 전송 응답이 다른 통화 기록에 저장되지 않도록 하고, 음성 연결 시작에 실패하면 대기 중인 승인 요청을 거절하도록 수정했습니다.
+
+## 1.1.6 — 2026-10-27
+
+### English
+
+- Add a tooltip to the settings version label identifying the currently running version.
+
+### 한국어
+
+- 설정의 버전 표시에 현재 실행 중인 버전임을 알려주는 도움말을 추가했습니다.
+
+## 1.1.5 — 2026-10-27
+
+### English
+
+- Fix Windows updates failing before the app restarts, and allow executable replacement and relaunch to finish after shutdown.
+- If automatic updates fail in 1.1.3 or 1.1.4, download and run 1.1.5 manually once.
+
+### 한국어
+
+- Windows에서 앱이 재시작되기 전에 업데이트가 실패하던 문제를 수정하고, 종료 후 실행 파일 교체와 재실행이 완료되도록 했습니다.
+- 1.1.3 또는 1.1.4에서 자동 업데이트에 실패하면 이번 1.1.5 버전은 한 번 직접 다운로드해 실행해 주세요.
+
+## 1.1.4 — 2026-10-27
+
+### English
+
+- Add Codex Live voice conversations over WebRTC, with microphone mute, captions, text input, and voice selection using the signed-in Codex account.
+- Isolate the Live window and restrict its permissions to audio. Keep Codex conversations read-only and release microphone resources when calls end, are cancelled, or the system suspends.
+- Apply the shared app theme to chat and settings windows.
+
+### 한국어
+
+- 로그인한 Codex 계정으로 WebRTC 음성 대화를 할 수 있는 Codex Live를 추가했습니다. 마이크 음소거, 자막, 텍스트 입력, 목소리 선택을 지원합니다.
+- Live 창을 격리하고 오디오 권한만 허용합니다. Codex 대화는 읽기 전용으로 유지하며, 통화 종료·취소·절전 시 마이크 자원을 해제합니다.
+- 채팅과 설정 창에 공통 앱 테마를 적용했습니다.
+
+## 1.1.3 — 2026-10-27
+
+### English
+
+- Add one-click updates for Windows portable builds: verify release checksums, replace the executable at its existing path, restart, and restore the previous version if startup fails. Install this updater-enabled release manually first when upgrading from an older build without the updater.
+- Show missing Gemini quota for Antigravity accounts while preserving existing quota summaries when the optional lookup fails.
+- Reduce idle filesystem scanning and movement timers, and release hidden UI resources after a grace period.
+- Skip native packaging and intermediate artifact uploads for versions that already have a published release. Make native watcher tests cover recovery from missed filesystem notifications.
+
+### 한국어
+
+- Windows 포터블 버전에 원클릭 업데이트를 추가했습니다. 릴리스 체크섬을 검증하고 기존 경로의 실행 파일을 교체해 재시작하며, 시작에 실패하면 이전 버전으로 복구합니다. 자동 업데이트가 없는 이전 빌드에서는 먼저 이번 버전을 직접 다운로드해 설치해 주세요.
+- Antigravity 계정에서 빠져 있던 Gemini 잔여량을 보완하고, 추가 조회에 실패해도 기존 할당량 요약을 유지합니다.
+- 유휴 상태의 파일 탐색과 이동 타이머를 줄이고, 숨겨진 UI 자원을 일정 시간 후 해제합니다.
+- 이미 공개 릴리스가 있는 버전은 네이티브 패키징과 중간 아티팩트 업로드를 생략합니다. 파일 감시 테스트에 알림 누락 후 복구 검증을 추가했습니다.
+
+## 1.1.2 — 2026-10-26
+
+### English
+
+- Keep cookie and JWT redaction linear on repeated long input while covering long cookie names, values beginning with `=`, and JWTs after hyphens.
+- Restore curl cookie-option masking and correctly handle brackets inside quoted cookie-array values, including escaped JSON.
+- Reduce false positives in code and add regression, persisted-trace, and performance tests for credential masking.
+
+### 한국어
+
+- 반복되는 긴 입력에서도 쿠키·JWT 가림을 선형으로 처리하며, 긴 쿠키 이름·`=`로 시작하는 값·하이픈 뒤 JWT의 가림 범위를 유지합니다.
+- curl 쿠키 옵션의 가림을 복원하고, 이스케이프된 JSON을 포함해 쿠키 배열의 문자열 안에 있는 대괄호를 올바르게 처리합니다.
+- 코드의 오탐을 줄이고 자격 증명 가림의 회귀·저장된 작업 기록·성능 테스트를 추가했습니다.
+
 ## 1.1.1 — 2026-10-26
 
 ### English

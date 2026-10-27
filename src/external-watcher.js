@@ -1,6 +1,7 @@
 const fs = require("node:fs");
 const path = require("node:path");
 const { EventEmitter } = require("node:events");
+const { LogFileIndex } = require("./log-file-index");
 
 const MAX_RECENT_EVENTS = 1200;
 const MAX_ACCUMULATED_MESSAGE_CHARS = 4000;
@@ -69,6 +70,12 @@ class ExternalWatcher extends EventEmitter {
 
   start() {
     if (this.timer) return;
+    this.fileIndex = new LogFileIndex({ scan: (root) => this.findFiles(root).flatMap((filePath) => {
+      try {
+        const stat = fs.statSync(filePath);
+        return [{ filePath, size: stat.size, mtimeMs: stat.mtimeMs }];
+      } catch { return []; }
+    }) });
     this.seed();
     this.timer = setInterval(() => this.poll(), this.pollMs);
   }
@@ -76,6 +83,8 @@ class ExternalWatcher extends EventEmitter {
   stop() {
     clearInterval(this.timer);
     this.timer = null;
+    this.fileIndex?.close();
+    this.fileIndex = null;
     this.offsets.clear();
     this.buffers.clear();
     this.sessions.clear();
@@ -83,6 +92,10 @@ class ExternalWatcher extends EventEmitter {
   }
 
   seed() {
+    if (this.fileIndex) {
+      for (const file of this.fileIndex.read(this.roots)) this.offsets.set(file.filePath, file.size);
+      return;
+    }
     for (const file of this.files()) {
       try {
         this.offsets.set(file, fs.statSync(file).size);
@@ -118,10 +131,12 @@ class ExternalWatcher extends EventEmitter {
 
   poll() {
     const now = Date.now();
-    for (const file of this.files()) {
+    const indexed = this.fileIndex?.read(this.roots);
+    const sizes = indexed && new Map(indexed.map((file) => [file.filePath, file.size]));
+    for (const file of sizes ? sizes.keys() : this.files()) {
       let size;
       try {
-        size = fs.statSync(file).size;
+        size = sizes ? sizes.get(file) : fs.statSync(file).size;
       } catch {
         continue;
       }
@@ -164,6 +179,13 @@ class ExternalWatcher extends EventEmitter {
       }
     }
 
+    if (sizes) {
+      for (const file of this.offsets.keys()) {
+        if (sizes.has(file)) continue;
+        this.offsets.delete(file);
+        this.buffers.delete(file);
+      }
+    }
     for (const [id, session] of [...this.sessions]) {
       if (now - session.lastAt > this.quietMs) this.finish(id, "quiet");
     }

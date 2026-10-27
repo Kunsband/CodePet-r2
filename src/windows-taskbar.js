@@ -10,15 +10,27 @@ function taskbarRows(snapshot) {
   });
 }
 
-function createTaskbar({ onClick, onStatus = () => {}, onDiagnostic = () => {}, icon, platform = process.platform }) {
-  let child, retryTimer, stopped = false, failures = 0, bounds = null;
-  let state = { visible: true, offset: 0, rows: [], icon: icon?.toString("base64") };
+function createTaskbar({ onClick, onStatus = () => {}, onDiagnostic = () => {}, icon, platform = process.platform,
+  visible = true, spawnProcess = spawn }) {
+  let child, retryTimer, stopped = false, closing = false, failures = 0, bounds = null;
+  let state = { visible, offset: 0, rows: [], icon: icon?.toString("base64") };
   const send = () => { if (child?.stdin.writable) child.stdin.write(`${JSON.stringify(state)}\n`); };
+  function stopHost() {
+    clearTimeout(retryTimer);
+    bounds = null;
+    if (!child || closing) return;
+    closing = true;
+    const host = child;
+    host.stdin.end();
+    const timer = setTimeout(() => host.kill(), 2000);
+    timer.unref?.();
+    host.once("close", () => clearTimeout(timer));
+  }
   function launch() {
-    if (stopped || platform !== "win32") return;
+    if (stopped || child || !state.visible || platform !== "win32") return;
     const script = "$ErrorActionPreference='Stop'; $ProgressPreference='SilentlyContinue'; Add-Type -ReferencedAssemblies System.Windows.Forms,System.Drawing,System.Web.Extensions -TypeDefinition ([Text.Encoding]::UTF8.GetString([Convert]::FromBase64String([Console]::ReadLine()))); [CodePetTaskbar]::Run()";
     const executable = path.join(process.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
-    child = spawn(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Sta", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
+    child = spawnProcess(executable, ["-NoLogo", "-NoProfile", "-NonInteractive", "-Sta", "-EncodedCommand", Buffer.from(script, "utf16le").toString("base64")], { windowsHide: true, stdio: ["pipe", "pipe", "pipe"] });
     child.stdin.on("error", () => {});
     child.on("error", () => onStatus({ type: "unavailable" }));
     // Never log the full command or user/account data; protocol contains summary percentages only.
@@ -27,16 +39,20 @@ function createTaskbar({ onClick, onStatus = () => {}, onDiagnostic = () => {}, 
     lines.on("line", (line) => {
       try {
         const event = JSON.parse(line);
-        if (!event.attached) return;
+        if (!event.attached || closing || !state.visible) return;
         if (![event.x, event.y, event.width, event.height].every(Number.isFinite)) return;
         bounds = { x: event.x, y: event.y, width: event.width, height: event.height };
         if (event.type === "click") onClick(bounds);
         if (event.type === "attached") { failures = 0; onStatus(event); }
       } catch { }
     });
-    child.once("exit", () => {
+    child.once("close", () => {
+      const intentional = closing;
+      closing = false;
       lines.close(); child = null; bounds = null;
-      if (!stopped && ++failures <= 3) retryTimer = setTimeout(launch, failures * 2000);
+      if (stopped || !state.visible) return;
+      if (intentional) launch();
+      else if (++failures <= 3) retryTimer = setTimeout(launch, failures * 2000);
     });
     child.stdin.write(`${fs.readFileSync(path.join(__dirname, "windows-taskbar-host.cs")).toString("base64")}\n`);
     send();
@@ -44,10 +60,14 @@ function createTaskbar({ onClick, onStatus = () => {}, onDiagnostic = () => {}, 
   launch();
   return {
     update(snapshot) { state = { ...state, rows: taskbarRows(snapshot) }; send(); },
-    setVisible(visible) { state = { ...state, visible }; send(); },
+    setVisible(visible) {
+      state = { ...state, visible };
+      if (!visible) stopHost();
+      else { launch(); send(); }
+    },
     resetPosition() { state = { ...state, offset: 0 }; send(); },
     getBounds() { return bounds; },
-    dispose() { stopped = true; clearTimeout(retryTimer); child?.stdin.end(); const closing = child; if (closing) { const timer = setTimeout(() => closing.kill(), 2000); timer.unref(); } },
+    dispose() { stopped = true; stopHost(); },
   };
 }
 module.exports = { createTaskbar, taskbarRows };

@@ -7,6 +7,7 @@ const { ClaudeWatcher, parseClaudeRow } = require("../src/claude-watcher");
 const { applyActivityPrivacy } = require("../src/activity-bubble-state");
 const { createPetMotionHarness } = require("./lib/pet-motion-harness");
 const sourceRoot = process.env.CODEPET_SMOKE_APP_ROOT || path.join(__dirname, "..", "src");
+const { releaseHiddenWindow } = require(path.join(sourceRoot, "idle-window-release"));
 const output = path.join(__dirname, "..", "artifacts", "pet-motion-smoke", String(Date.now()));
 fs.mkdirSync(output, { recursive: true });
 app.setPath("userData", path.join(output, "electron-profile"));
@@ -63,7 +64,10 @@ async function main() {
   bubble.webContents.send("bubble:update", applyActivityPrivacy(report.bubble, "status"));
   await until(async () => (await bubble.webContents.executeJavaScript("document.body.innerText")).includes("Claude 작업 중입니다."));
   fs.writeFileSync(path.join(output, "bubble.png"), (await bubble.webContents.capturePage(undefined, { stayHidden: true })).toPNG());
-  bubble.destroy();
+  const bubblePid = bubble.webContents.getOSProcessId();
+  releaseHiddenWindow(bubble, { delayMs: 100 });
+  await until(() => bubble.isDestroyed());
+  await until(() => !app.getAppMetrics().some((entry) => entry.pid === bubblePid));
 
   const frames = new Set();
   for (let i = 0; i < 8; i++) {
@@ -71,6 +75,18 @@ async function main() {
     await pause(180);
   }
   assert.ok(frames.size >= 3, "working canvas must actually animate");
+  win.webContents.send("pet:set-visible", false);
+  await until(() => js("animationTimer === null"));
+  const hiddenFrame = await js("currentFrame");
+  await pause(600);
+  assert.equal(await js("currentFrame"), hiddenFrame, "hidden pet must stop animation ticks");
+  win.webContents.send("pet:set-state", "review");
+  await until(() => js("currentStateName === 'review'"));
+  assert.equal(await js("animationTimer"), null, "hidden activity must not restart animation");
+  win.webContents.send("pet:set-visible", true);
+  await until(() => js("animationTimer !== null"));
+  win.webContents.send("pet:set-state", "running");
+  await until(() => js("currentStateName === 'running'"));
   h.context.updateMovementTick();
   h.context.beginWalkingPhase();
   assert.deepEqual([h.context.runtime.x, h.context.runtime.y], [100, 100]);
@@ -91,7 +107,8 @@ async function main() {
   fs.writeFileSync(path.join(output, "complete.png"), (await win.webContents.capturePage(undefined, { stayHidden: true })).toPNG());
   assert.deepEqual(errors, []);
   Object.assign(report, { passed: true, sourceRoot, distinctFrames: frames.size, fixedPosition: true,
-    reactionRestored: true, completeState: "idle", rendererErrors: errors });
+    reactionRestored: true, hiddenAnimationStopped: true, hiddenRendererReleased: true,
+    completeState: "idle", rendererErrors: errors });
   fs.writeFileSync(path.join(output, "report.json"), JSON.stringify(report, null, 2));
   console.log(JSON.stringify({ ...report, output }));
   win.destroy();

@@ -1,6 +1,33 @@
 const test = require("node:test");
 const assert = require("node:assert/strict");
 const { taskbarRows, createTaskbar } = require("../src/windows-taskbar");
+
+test("hidden taskbar starts no process and rapid hide/show waits for the old host to exit", (t) => {
+  const { EventEmitter } = require("node:events");
+  const { PassThrough } = require("node:stream");
+  t.mock.timers.enable({ apis: ["setTimeout"] });
+  const hosts = [];
+  const bar = createTaskbar({ platform: "win32", visible: false, onClick() {}, spawnProcess: () => {
+    const host = Object.assign(new EventEmitter(), { stdin: new PassThrough(), stdout: new PassThrough(), stderr: new PassThrough(), kill() { this.killed = true; } });
+    hosts.push(host);
+    return host;
+  } });
+  assert.equal(hosts.length, 0);
+  bar.setVisible(true);
+  assert.equal(hosts.length, 1);
+  bar.setVisible(false);
+  assert.equal(hosts[0].stdin.writableEnded, true);
+  bar.setVisible(true);
+  assert.equal(hosts.length, 1);
+  hosts[0].emit("close");
+  assert.equal(hosts.length, 2);
+  t.mock.timers.tick(2000);
+  assert.equal(hosts[0].killed, undefined);
+  bar.dispose();
+  hosts[1].emit("close");
+  t.mock.timers.tick(10000);
+  assert.equal(hosts.length, 2);
+});
 test("taskbar protocol contains no credentials or account identity and preserves unknown values", () => {
   const rows = taskbarRows({ providers: [
     { label: "Codex", account: "private@example.com", token: "secret", connected: true, gauges: [{ usedPercent: null }] },
