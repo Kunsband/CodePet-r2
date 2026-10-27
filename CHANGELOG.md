@@ -1,5 +1,17 @@
 # Release notes / 릴리즈 노트
 
+## 1.1.5 — 2026-10-27
+
+### English
+
+- Fix Windows updates failing before the app restarts, and allow executable replacement and relaunch to finish after shutdown.
+- If automatic updates fail in 1.1.3 or 1.1.4, download and run 1.1.5 manually once.
+
+### 한국어
+
+- Windows에서 앱이 재시작되기 전에 업데이트가 실패하던 문제를 수정하고, 종료 후 실행 파일 교체와 재실행이 완료되도록 했습니다.
+- 1.1.3 또는 1.1.4에서 자동 업데이트에 실패하면 이번 1.1.5 버전은 한 번 직접 다운로드해 실행해 주세요.
+
 ## 1.1.4 — 2026-10-27
 
 ### English
