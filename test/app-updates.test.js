@@ -83,6 +83,54 @@ test("same/older releases do not provide a download action", async () => {
   }
 });
 
+test("manual checks bypass stale success, coalesce and throttle repeated refreshes", async () => {
+  let now = 0, calls = 0, finish;
+  const checker = new AppUpdateChecker({ currentVersion: "1.1.7", now: () => now, fetchImpl: async () => {
+    calls++;
+    if (calls === 1) return response(release("1.1.7"));
+    if (calls === 2) return new Promise(resolve => { finish = resolve; });
+    return response(release("1.1.8"));
+  } });
+  assert.equal((await checker.check()).status, "up-to-date");
+  const manual = checker.check({ force: true });
+  assert.equal(calls, 2);
+  const concurrent = checker.check({ force: true }), automatic = checker.check();
+  finish(response(release("1.1.8")));
+  for (const result of await Promise.all([manual, concurrent, automatic])) assert.equal(result.status, "available");
+  assert.equal(calls, 2);
+  now = 9999;
+  const throttled = await checker.check({ force: true });
+  assert.equal(throttled.status, "available"); assert.equal(throttled.retryAfterMs, 1); assert.equal(calls, 2);
+  now = 10000; await checker.check({ force: true }); assert.equal(calls, 3);
+  await checker.check(); assert.equal(calls, 3);
+});
+
+test("manual retry can recover from a cached failed automatic check", async () => {
+  let calls = 0;
+  const checker = new AppUpdateChecker({ currentVersion: "1.1.7", fetchImpl: async () => {
+    if (++calls === 1) throw new Error("offline"); return response(release("1.1.8"));
+  } });
+  assert.equal((await checker.check()).status, "unavailable");
+  assert.equal((await checker.check({ force: true })).status, "available");
+  assert.equal(calls, 2);
+});
+
+test("update check IPC accepts only an explicit boolean refresh and returns cooldown feedback", async () => {
+  const handlers = new Map(); let now = 0, calls = 0;
+  const checker = new AppUpdateChecker({ currentVersion: "1.1.7", now: () => now, fetchImpl: async () => {
+    calls++; return response(release(calls === 1 ? "1.1.7" : "1.1.8"));
+  } });
+  registerUpdateIpc({ checker, ipcMain: { handle: (name, fn) => handlers.set(name, fn) }, shell: {} });
+  const check = handlers.get("settings:check-update");
+  assert.equal((await check()).status, "up-to-date");
+  assert.equal((await check({}, { force: "true" })).status, "up-to-date"); assert.equal(calls, 1);
+  assert.equal((await check({}, { force: true })).status, "available"); assert.equal(calls, 2);
+  now = 1000;
+  const cached = await check({}, { force: true });
+  assert.equal(cached.retryAfterMs, 9000); assert.equal(calls, 2);
+  assert.equal(cached.downloadUrl, undefined);
+});
+
 test("download IPC opens the verified release asset, ignoring renderer-supplied URLs", async () => {
   const handlers = new Map(), opened = [];
   const checker = new AppUpdateChecker({ currentVersion: "1.0.12", platform: "win32", arch: "x64", fetchImpl: async () => response(release()) });

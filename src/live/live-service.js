@@ -206,7 +206,7 @@ class LiveService extends EventEmitter {
     const records = this.history.list();
     let cursor = null; const seen = new Set();
     do {
-      const native = await this.rpc.request('thread/list', { limit: 100, sortKey: 'updated_at', ...(cursor ? { cursor } : {}) });
+      const native = await this.rpc.request('thread/list', { limit: 100, archived: false, sortKey: 'updated_at', ...(cursor ? { cursor } : {}) });
       for (const thread of native.data || []) {
         if (validId(thread.id) && !records.some(record => record.id === thread.id)) {
           records.push({ id: thread.id, cwd: thread.cwd, createdAt: thread.createdAt * 1000, updatedAt: thread.updatedAt * 1000, messages: [] });
@@ -216,7 +216,7 @@ class LiveService extends EventEmitter {
       if (cursor && seen.has(cursor)) throw new Error('대화 목록을 불러오지 못했습니다.');
       seen.add(cursor);
     } while (cursor);
-    return records.sort((a, b) => b.updatedAt - a.updatedAt).map(record => ({ id: record.id, cwd: record.cwd, updatedAt: record.updatedAt,
+    return records.filter(record => !record.deletedAt).sort((a, b) => b.updatedAt - a.updatedAt).map(record => ({ id: record.id, cwd: record.cwd, updatedAt: record.updatedAt,
       title: record.messages.find(m => m.role === 'user')?.text.slice(0, 80) || '새 대화' }));
   }
   async selectHistory(id) {
@@ -225,6 +225,7 @@ class LiveService extends EventEmitter {
     if (id === null) { this.thread = null; this.threadWorkspace = null; return { messages: [] }; }
     if (!validId(id)) throw new Error('대화 ID가 올바르지 않습니다.');
     let record = this.history.read(id);
+    if (record?.deletedAt) throw new Error('삭제된 대화입니다.');
     if (!record) {
       const result = await this.rpc.request('thread/read', { threadId: id, includeTurns: true });
       const thread = result.thread;
@@ -254,6 +255,24 @@ class LiveService extends EventEmitter {
       if (this.call?.record?.id === record.id) this.call.record.cwd = cwd;
       this.threadWorkspace = cwd;
     }
+  }
+  async deleteHistory(id) {
+    await this.prepare();
+    if (!validId(id)) throw new Error('대화 ID가 올바르지 않습니다.');
+    if (this.pendingStart) throw new Error('연결이 완료된 뒤 대화를 삭제해 주세요.');
+    const record = this.history.read(id);
+    if (record?.deletedAt) throw new Error('삭제된 대화입니다.');
+    const call = this.call;
+    if (call?.threadId === id) {
+      await this.stop(call.key);
+      // Stop renderer media even if the native deletion below fails.
+      this.emit('event', { key: call.key, type: 'closed' });
+    }
+    await this.rpc.request('thread/delete', { threadId: id });
+    this.history.write({ id, deletedAt: Date.now(), messages: [] });
+    const active = this.thread === id;
+    if (active) { this.thread = null; this.threadWorkspace = null; }
+    return { id, active };
   }
   async text({ key, text }) {
     const call = this.call;
