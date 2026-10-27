@@ -7,6 +7,7 @@ const { spawn, execFile } = require("node:child_process");
 const { promisify } = require("node:util");
 const { createHash } = require("node:crypto");
 const { WINDOWS_UPDATE_SCRIPT } = require("../src/windows-update-helper");
+const { RELEASE_REPOSITORY } = require("../src/app-updates");
 const run = promisify(execFile);
 const hash = value => createHash("sha256").update(value).digest("hex");
 const delay = ms => new Promise(resolve => setTimeout(resolve, ms));
@@ -125,7 +126,7 @@ test("Windows helper replaces and restarts a native EXE, or restores it after fa
       const { AppUpdateInstaller } = require(${JSON.stringify(require.resolve("../src/app-update-installer"))});
       const bytes = fs.readFileSync(${JSON.stringify(payload)});
       const checksum = createHash('sha256').update(bytes).digest('hex');
-      const root = 'https://github.com/nokryong/CodePet/releases/download/v9.9.9/';
+      const root = ${JSON.stringify(`https://github.com/${RELEASE_REPOSITORY}/releases/download/v9.9.9/`)};
       const updater = new AppUpdateInstaller({
         app: { isPackaged: true, quit: () => process.exit(0) },
         fetchImpl: async url => new Response(url.endsWith('SHA256SUMS') ? checksum + '  CodePet-9.9.9.exe\\n' : bytes),

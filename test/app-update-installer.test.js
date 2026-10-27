@@ -7,8 +7,9 @@ const path = require("node:path");
 const { createHash } = require("node:crypto");
 const { EventEmitter } = require("node:events");
 const { AppUpdateInstaller, acknowledgeUpdateStartup, checksumFor, fetchReleaseFile, portableTarget } = require("../src/app-update-installer");
+const { AppUpdateChecker, RELEASE_REPOSITORY } = require("../src/app-updates");
 
-const root = "https://github.com/nokryong/CodePet/releases/download/v2.0.0/";
+const root = `https://github.com/${RELEASE_REPOSITORY}/releases/download/v2.0.0/`;
 const bytes = Buffer.from("MZ verified portable update fixture");
 const hash = value => createHash("sha256").update(value).digest("hex");
 const release = { asset: { name: "CodePet-2.0.0.exe", url: `${root}CodePet-2.0.0.exe`, size: bytes.length }, checksumUrl: `${root}SHA256SUMS` };
@@ -116,6 +117,18 @@ test("checksum mismatch, interrupted/oversized downloads and helper failures pre
       await delay(350); assert.equal(f.quits(), 1);
     });
   }
+});
+
+test("fork: the installer accepts the checker's own release and never upstream downloads", async t => {
+  await assert.rejects(fetchReleaseFile("https://github.com/nokryong/CodePet/releases/download/v9.9.9/CodePet-9.9.9.exe",
+    () => { throw new Error("must not fetch"); }), /Untrusted/);
+  const checker = new AppUpdateChecker({ currentVersion: "1.0.0", platform: "win32", arch: "x64",
+    fetchImpl: async () => ({ ok: true, json: async () => ({ tag_name: "v2.0.0", draft: false, prerelease: false,
+      assets: [release.asset.name, "SHA256SUMS"].map(name => ({ name, size: bytes.length, browser_download_url: `${root}${name}` })) }) }) });
+  const f = await fixture(t);
+  await f.updater.install(await checker.check());
+  assert.equal(f.spawns(), 1);
+  await delay(350); assert.equal(f.quits(), 1);
 });
 
 test("missing checksums and invalid assets never spawn or quit", async t => {

@@ -5,9 +5,11 @@ const { createHash } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { EventEmitter } = require("node:events");
 const { WINDOWS_UPDATE_SCRIPT, WINDOWS_UPDATE_BOOTSTRAP } = require("./windows-update-helper");
+const { RELEASE_REPOSITORY } = require("./app-updates");
 
 const MAX_DOWNLOAD = 1024 * 1024 * 1024;
-const RELEASE_PREFIX = "https://github.com/nokryong/CodePet/releases/download/";
+// Fork: install only from the repository the update checker queries (see app-updates.js).
+const RELEASE_PREFIX = `https://github.com/${RELEASE_REPOSITORY}/releases/download/`;
 const DOWNLOAD_HOSTS = new Set(["github.com", "release-assets.githubusercontent.com", "objects.githubusercontent.com"]);
 const pause = ms => new Promise(resolve => setTimeout(resolve, ms));
 
