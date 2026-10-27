@@ -19,7 +19,7 @@ contextBridge.exposeInMainWorld("settingsApi", {
   fonts: () => ipcRenderer.invoke(CHANNELS.FONTS),
   account: (value) => ipcRenderer.invoke(CHANNELS.ACCOUNT, value),
   usage: () => ipcRenderer.invoke(CHANNELS.USAGE),
-  checkUpdate: () => ipcRenderer.invoke(CHANNELS.CHECK_UPDATE),
+  checkUpdate: (force = false) => ipcRenderer.invoke(CHANNELS.CHECK_UPDATE, { force: force === true }),
   downloadUpdate: () => ipcRenderer.invoke(CHANNELS.DOWNLOAD_UPDATE),
   onUpdateProgress: (handler) => {
     if (typeof handler !== "function") return () => {};

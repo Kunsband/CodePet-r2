@@ -8,7 +8,8 @@ test("fork: Live starts in a dedicated empty folder, not the CodePet program fol
   const main = fs.readFileSync(path.join(__dirname, "../src/main.js"), "utf8");
   assert.match(main, /const liveWorkspace = path\.join\(os\.homedir\(\), "\.codepet", "live", "workspace"\);/);
   assert.match(main, /defaultWorkspace: liveWorkspace,/);
-  assert.doesNotMatch(main, /defaultWorkspace: app\.isPackaged/);
+  // Upstream has used the app folder and, since 1.1.9, the whole home folder; keep neither.
+  assert.doesNotMatch(main, /defaultWorkspace: (app\.isPackaged|os\.homedir\(\))/);
 });
 
 test("fork: log watchers reconcile every 5 seconds by default", () => {

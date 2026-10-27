@@ -1,5 +1,19 @@
 # Release notes / 릴리즈 노트
 
+## 1.1.9 — 2026-10-27
+
+### English
+
+- Add an always-visible update check in Settings, with retry and failure feedback. Explicit checks refresh cached results while coalescing concurrent requests and limiting repeated requests.
+- Add confirmed deletion of Codex Live conversations and clean up microphone connections even when active-conversation deletion fails.
+- Default new Live conversations to the home folder. The workspace-write permission scope therefore covers the home folder; choose a narrower project folder in Live settings when needed.
+
+### 한국어
+
+- 설정에 항상 표시되는 업데이트 확인 버튼과 재시도·실패 안내를 추가했습니다. 직접 확인하면 캐시를 갱신하며, 동시 요청과 짧은 시간의 반복 요청을 제한합니다.
+- 확인 후 Codex Live 대화를 삭제하는 기능을 추가하고, 활성 대화 삭제에 실패해도 마이크 연결을 정리하도록 했습니다.
+- 새 Live 대화의 기본 프로젝트 폴더를 홈폴더로 변경했습니다. workspace-write 권한의 쓰기 범위도 홈폴더가 되므로, 더 좁은 범위가 필요하면 Live 설정에서 프로젝트 폴더를 선택하세요.
+
 ## 1.1.8 — 2026-10-27
 
 ### English

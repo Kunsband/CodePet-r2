@@ -22,6 +22,13 @@ svg { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width:
 .history-item { text-align: left; padding: 8px; border-radius: 6px; background: transparent; overflow-wrap: anywhere; }
 .history-item:hover, .history-item[aria-current=true] { background: var(--accent-soft); }
 .history-item small { display: block; color: var(--muted); }
+.history-row { display: flex; align-items: center; gap: 2px; }
+.history-row .history-item { flex: 1; min-width: 0; }
+.history-delete { flex: none; width: 28px; height: 32px; background: transparent; color: var(--muted); border-radius: 6px; }
+.history-delete:hover { color: #b91c1c; background: var(--danger-soft); }
+.project-summary { display: flex; gap: 8px; padding: 7px 16px; background: var(--surface); color: var(--muted); text-align: left; border-bottom: 1px solid var(--line); font-size: 11px; }
+.project-summary span:first-child { flex: none; }
+#project-path { min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
 .history-messages { flex: 0 1 35%; min-height: 0; overflow: auto; white-space: pre-wrap; overflow-wrap: anywhere; padding: 8px 20px; }
 .history-messages[hidden] { display: none; }
 .history-messages p { margin: 0 0 12px; }

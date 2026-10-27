@@ -1,9 +1,10 @@
 const path = require('node:path');
 const fs = require('node:fs');
+const os = require('node:os');
 const { pathToFileURL } = require('node:url');
 const { LiveService, publicError } = require('./live-service');
 
-function createLiveFeature({ electron, root, defaultWorkspace = process.cwd(), getAccount, getAppearance, makeService, onWindowReady }) {
+function createLiveFeature({ electron, root, defaultWorkspace = os.homedir(), getAccount, getAppearance, makeService, onWindowReady }) {
   const { BrowserWindow, ipcMain, powerMonitor, dialog } = electron;
   const rootWorkspace = path.resolve(defaultWorkspace);
   let workspace = rootWorkspace;
@@ -68,6 +69,16 @@ function createLiveFeature({ electron, root, defaultWorkspace = process.cwd(), g
     });
     handle('live:start', input => ensureService().start({ ...input, workspace }));
     handle('live:history:list', () => ensureService().listHistory());
+    handle('live:history:delete', async input => {
+      const target = (await ensureService().listHistory()).find(item => item.id === input?.id);
+      if (!target) throw new Error('대화 기록을 찾을 수 없습니다.');
+      const answer = await dialog.showMessageBox(window, { type: 'warning', title: '대화 삭제',
+        message: '이 대화를 삭제할까요?', detail: target.title, buttons: ['취소', '삭제'], defaultId: 0, cancelId: 0, noLink: true });
+      if (answer.response !== 1) return { canceled: true };
+      const result = await ensureService().deleteHistory(target.id);
+      if (result.active) workspace = rootWorkspace;
+      return { ...result, workspace };
+    });
     handle('live:history:select', async input => {
       const result = await ensureService().selectHistory(input?.id ?? null);
       workspace = result.cwd || rootWorkspace;

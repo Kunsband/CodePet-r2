@@ -68,6 +68,11 @@ Attachments are copied into the session. Images can be delivered to Codex and, w
 
 Right-click the pet or tray icon and choose **Live 음성 대화…**. Sign in to the installed Codex CLI with a ChatGPT account, then press Start in Live. Use the microphone button to mute, type into the message box during a call, or end the call with the stop button. Closing the window also releases the microphone.
 
+- **Conversations:** Select a conversation in the left sidebar to view its saved messages and continue it, or choose **새 대화** to start a new one. In narrow windows, use the menu button to open the sidebar.
+- **Projects:** Each conversation keeps its own project folder. New conversations default to the empty dedicated folder `~/.codepet/live/workspace` (a change in this fork; upstream uses your home directory). Click the project path above the conversation to open settings and choose another folder.
+- **Permissions:** Choose **승인 요청** to request approval for untrusted commands and additional access, **나 대신 승인** to allow ordinary workspace operations and request approval for extra access, or **전체 권한** for unrestricted file and network access. Approval requests appear inside Live. Changing permissions reconnects the call.
+- **Delete:** Click **×** beside a conversation and confirm to delete its saved messages and dedicated Codex thread. Deleting an active conversation also ends its call.
+
 Conversation models and voices are loaded from the signed-in Codex runtime. Refresh the list in voice settings after ending a call. The voice model uses the server default; its name is shown only when the connection supplies it. Codex currently exposes no selectable language catalog, so Live follows the language you speak.
 
 Live shares the Settings and agent-chat theme. Its window can be resized, with the character capped at 200 pixels. Work mode replaces the character with an animated orb. Live keeps its Codex conversation separate from other chats and offers permission levels and approval prompts in its settings.
@@ -109,9 +114,11 @@ For a custom pet, place `spritesheet.webp` in a `pet/` folder beside the executa
 
 ## Data and privacy
 
-Conversations, attachment copies, and local task traces are stored in `~/.code-pet`. Set `CODE_PET_HOME` to change the location. Uninstalling the app leaves this folder in place. Deleting a chat also removes its traces.
+Agent-chat conversations, attachment copies, and local task traces are stored in `~/.code-pet`. Set `CODE_PET_HOME` to change the location. Uninstalling the app leaves this folder in place. Deleting a chat also removes its traces.
 
-Each participant resumes its native CLI session within the same chat, including after an app restart. Changing the account, working directory, permissions, model, or reasoning setting starts a new session. Saved-account participants use their own profile; deleting a CodePet chat does not delete native CLI history.
+In agent chats, each participant resumes its native CLI session within the same chat, including after an app restart. Changing the account, working directory, permissions, model, or reasoning setting starts a new session. Saved-account participants use their own profile; deleting an agent chat does not delete native CLI history.
+
+Live stores completed voice transcripts, typed messages, and its dedicated Codex sessions separately under `~/.codepet/live`, with history separated by account. Select a saved conversation in Live to continue after reopening the app. Earlier voice conversations may have no transcript if it was not recorded. Deleting a Live conversation removes its local message contents and its dedicated Codex thread.
 
 CodePet does not copy CLI credentials into chat storage and redacts recognized credential patterns from task traces. Saved account profiles are stored separately under `~/.codepet/*-switch`.
 
