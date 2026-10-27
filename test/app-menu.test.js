@@ -11,7 +11,7 @@ function declaration(name) {
   return source.slice(start, source.indexOf("\n}", start) + 2);
 }
 function setup({ petVisible, taskbarVisible }) {
-  const calls = { popup: 0, toggle: 0, petMenus: [] };
+  const calls = { popup: 0, toggle: 0, live: 0, petMenus: [] };
   const context = {
     Menu: { buildFromTemplate: (items) => ({ items, popup: (options) => calls.petMenus.push({ items, options }) }) },
     petWindow: { isDestroyed: () => false, isVisible: () => petVisible },
@@ -19,6 +19,7 @@ function setup({ petVisible, taskbarVisible }) {
     usageWindows: { togglePopup: () => calls.popup++, toggleBar: () => calls.toggle++ },
     readSettings: () => ({ taskbarUsageVisible: taskbarVisible }),
     runtime: { manualPaused: false },
+    liveFeature: { openWindow: () => calls.live++ },
     isCodexProxyModeEnabled: () => false, isAutoLaunchEnabled: () => false,
   };
   for (const name of ["openSettingsWindow", "openChatWindow", "showPetWindowFromTray", "hidePetWindowToTray", "setCodexProxyMode", "toggleManualPause", "toggleAutoLaunch", "quitApp"]) context[name] = () => {};
@@ -44,11 +45,13 @@ for (const petVisible of [true, false]) {
         assert.equal(toggle.checked, taskbarVisible !== false);
         toggle.click();
         assert.ok(items.some((item) => item.label === "모션 실행"));
+        items.find((item) => item.label === "Live 음성 대화…").click();
         assert.ok(items.some((item) => item.label === "로그인 시 자동 실행"));
         assert.ok(!items.some((item) => item.label === "마우스 따라가기"));
       }
       assert.equal(calls.popup, 2);
       assert.equal(calls.toggle, 2);
+      assert.equal(calls.live, 2);
     });
   }
 }

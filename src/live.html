@@ -1,0 +1,58 @@
+<!doctype html>
+<html lang="ko">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'self'; script-src 'self'; style-src 'self' 'unsafe-inline'; img-src 'self' data:; media-src 'self' blob:; connect-src 'self'; object-src 'none'; frame-src 'none'; base-uri 'none'">
+  <title>CodePet Live</title>
+  <link rel="stylesheet" href="app-theme.css">
+  <link rel="stylesheet" href="live.css">
+</head>
+<body>
+  <svg class="icon-defs" aria-hidden="true" xmlns="http://www.w3.org/2000/svg">
+    <symbol id="i-mic" viewBox="0 0 24 24"><rect x="9" y="3" width="6" height="12" rx="3"/><path d="M5 10v2a7 7 0 0 0 14 0v-2M12 19v3m-4 0h8"/></symbol>
+    <symbol id="i-mute" viewBox="0 0 24 24"><path d="m3 3 18 18M9 9v3a3 3 0 0 0 5 2M9 5a3 3 0 0 1 6 0v4M5 10v2a7 7 0 0 0 12 5m2-5v-2M12 19v3m-4 0h8"/></symbol>
+    <symbol id="i-wave" viewBox="0 0 24 24"><path d="M4 10v4m4-8v12m4-15v18m4-15v12m4-8v4"/></symbol>
+    <symbol id="i-settings" viewBox="0 0 24 24"><path d="M4 6h16M4 12h16M4 18h16M8 3v6m8 0v6m-6 0v6"/></symbol>
+    <symbol id="i-close" viewBox="0 0 24 24"><path d="m6 6 12 12M18 6 6 18"/></symbol>
+    <symbol id="i-send" viewBox="0 0 24 24"><path d="M12 20V4m-6 6 6-6 6 6"/></symbol>
+    <symbol id="i-down" viewBox="0 0 24 24"><path d="m7 10 5 5 5-5"/></symbol>
+    <symbol id="i-play" viewBox="0 0 24 24"><path d="m9 5 11 7-11 7Z"/></symbol>
+  </svg>
+  <div class="titlebar">
+    <div class="titlebar-drag"><span class="titlebar-logo" aria-hidden="true"><i></i><i></i></span><span class="titlebar-title">CodePet Live</span></div>
+    <div class="titlebar-controls">
+      <button class="titlebar-btn" id="minimize" aria-label="최소화"><svg viewBox="0 0 10 10"><path d="M1 5h8"/></svg></button>
+      <button class="titlebar-btn" id="maximize" aria-label="최대화"><svg viewBox="0 0 10 10"><path d="M2 2h6v6H2Z"/></svg></button>
+      <button class="titlebar-btn btn-close" id="close" aria-label="닫기"><svg viewBox="0 0 10 10"><path d="m2 2 6 6m0-6L2 8"/></svg></button>
+    </div>
+  </div>
+  <main class="live-window" data-mode="character" data-state="idle">
+    <header class="live-header"><div class="live-title"><svg><use href="#i-wave"/></svg><h1>Live</h1></div><button class="icon-button" id="settings-open" aria-label="음성 설정"><svg><use href="#i-settings"/></svg></button></header>
+    <div class="conversation">
+      <div class="visual-stage"><div class="character" role="img" aria-label="GPT 캐릭터"><div class="character-frame"></div></div><div class="orb" aria-label="음성 상태" role="img"><i></i><i></i></div></div>
+      <div class="status" role="status"><span class="status-dot"></span><span id="status">연결 정보를 불러오는 중…</span></div>
+      <div class="captions"><p id="caption-user"></p><p id="caption-assistant">무엇부터 해볼까요?</p></div>
+      <p class="error" id="error" role="alert" hidden></p>
+    </div>
+    <footer class="live-footer">
+      <div class="live-controls"><button class="icon-button mic-button" id="mute" aria-label="마이크 끄기" aria-pressed="false" disabled><svg><use href="#i-mic"/></svg></button><form id="message-form"><input id="message" aria-label="메시지" placeholder="메시지 입력" maxlength="8000" disabled><button class="send-button" id="send" aria-label="메시지 보내기" disabled><svg><use href="#i-send"/></svg></button></form><button class="icon-button end-button" id="call" aria-label="음성 대화 시작" disabled><svg><use href="#i-play"/></svg></button></div>
+      <button class="voice-summary" id="settings-summary"><span id="voice-summary">음성 설정</span><svg><use href="#i-down"/></svg></button>
+    </footer>
+  </main>
+  <dialog id="settings" aria-labelledby="settings-title">
+    <header class="settings-header"><h2 id="settings-title">음성 설정</h2><button class="icon-button" id="settings-close" aria-label="설정 닫기"><svg><use href="#i-close"/></svg></button></header>
+    <form id="settings-form">
+      <p class="account-label" id="account-label"></p>
+      <label class="field">대화 모델<select id="model" required disabled></select></label>
+      <label class="field">음성<select id="voice" required disabled></select></label>
+      <div class="field"><span>음성 모델</span><output id="realtime-model">서버 기본값</output></div>
+      <div class="field"><span>언어</span><output id="language">말하는 언어에 맞춤</output></div>
+      <div class="settings-actions"><button type="button" class="button" id="reload-catalog">새로고침</button><button class="button button-primary" id="settings-apply" disabled>적용</button></div>
+    </form>
+  </dialog>
+  <audio id="remote-audio" autoplay></audio>
+  <script src="live.js"></script>
+  <script src="live-motion.js"></script>
+</body>
+</html>
