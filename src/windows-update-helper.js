@@ -1,3 +1,18 @@
+// Windows PowerShell exits without executing its script with Node's detached
+// process flags on some Windows hosts. Start-Process creates a separate, hidden
+// console for the worker so it can also survive the GUI parent's shutdown.
+const WINDOWS_UPDATE_BOOTSTRAP = String.raw`
+$ErrorActionPreference = 'Stop'
+$workerScript = $env:CODEPET_UPDATE_SCRIPT
+Remove-Item Env:CODEPET_UPDATE_SCRIPT
+$config = $env:CODEPET_UPDATE_CONFIG | ConvertFrom-Json
+$workerArguments = @('-NoProfile', '-NonInteractive', '-WindowStyle', 'Hidden', '-EncodedCommand', $workerScript)
+$worker = Start-Process -FilePath (Join-Path $PSHOME 'powershell.exe') -ArgumentList $workerArguments -WindowStyle Hidden -PassThru
+[IO.File]::WriteAllText((Join-Path $config.stage 'helper.pid'), [string]$worker.Id)
+$worker.WaitForExit()
+exit $worker.ExitCode
+`;
+
 // Runs outside Electron so the portable launcher can exit and release its EXE.
 // All paths arrive as JSON in the environment, never as PowerShell source.
 const WINDOWS_UPDATE_SCRIPT = String.raw`
@@ -90,4 +105,4 @@ try {
 }
 `;
 
-module.exports = { WINDOWS_UPDATE_SCRIPT };
+module.exports = { WINDOWS_UPDATE_SCRIPT, WINDOWS_UPDATE_BOOTSTRAP };

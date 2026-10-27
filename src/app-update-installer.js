@@ -4,7 +4,7 @@ const path = require("node:path");
 const { createHash } = require("node:crypto");
 const { spawn } = require("node:child_process");
 const { EventEmitter } = require("node:events");
-const { WINDOWS_UPDATE_SCRIPT } = require("./windows-update-helper");
+const { WINDOWS_UPDATE_SCRIPT, WINDOWS_UPDATE_BOOTSTRAP } = require("./windows-update-helper");
 
 const MAX_DOWNLOAD = 1024 * 1024 * 1024;
 const RELEASE_PREFIX = "https://github.com/nokryong/CodePet/releases/download/";
@@ -135,21 +135,33 @@ class AppUpdateInstaller extends EventEmitter {
   async startHelper(config) {
     const powershell = path.join(this.env.SystemRoot || "C:\\Windows", "System32", "WindowsPowerShell", "v1.0", "powershell.exe");
     const child = this.spawn(powershell, ["-NoProfile", "-NonInteractive", "-WindowStyle", "Hidden", "-EncodedCommand",
-      Buffer.from(WINDOWS_UPDATE_SCRIPT, "utf16le").toString("base64")], {
-      detached: true, windowsHide: true, stdio: "ignore", cwd: path.dirname(this.target),
-      env: { ...this.env, CODEPET_UPDATE_CONFIG: JSON.stringify(config) },
+      Buffer.from(WINDOWS_UPDATE_BOOTSTRAP, "utf16le").toString("base64")], {
+      // The bootstrap creates the independent hidden worker using Start-Process.
+      detached: false, windowsHide: true, stdio: "ignore", cwd: path.dirname(this.target),
+      env: { ...this.env, CODEPET_UPDATE_CONFIG: JSON.stringify(config),
+        CODEPET_UPDATE_SCRIPT: Buffer.from(WINDOWS_UPDATE_SCRIPT, "utf16le").toString("base64") },
     });
+    const stopHelper = () => {
+      try {
+        const pid = Number(fs.readFileSync(path.join(config.stage, "helper.pid"), "utf8"));
+        if (Number.isSafeInteger(pid) && pid > 0) process.kill(pid);
+      } catch { /* The worker may have already exited or not started yet. */ }
+      child.kill();
+    };
     let failure;
     child.once("error", error => { failure = error; });
     child.once("exit", () => { failure ||= new Error("Update helper exited before it was ready"); });
     try {
       for (let attempt = 0; attempt < 150; attempt++) {
         if (failure) throw failure;
-        try { await fsp.access(path.join(config.stage, "ready")); return child; } catch {}
+        try {
+          await fsp.access(path.join(config.stage, "ready"));
+          return { unref: () => child.unref(), kill: stopHelper };
+        } catch {}
         await pause(100);
       }
       throw new Error("Update helper did not become ready");
-    } catch (error) { child.kill(); throw error; }
+    } catch (error) { stopHelper(); throw error; }
   }
 }
 
