@@ -116,6 +116,25 @@ async function until(check) {
   }
 }
 
+test("external watcher recovers an append when native notifications are lost", (t) => {
+  const root = fixture(t), file = path.join(root, "session.jsonl");
+  fs.writeFileSync(file, "\n");
+  t.mock.method(fs, "watch", () => Object.assign(new EventEmitter(), { close() {} }));
+  const watcher = new ExternalWatcher({ provider: "test", roots: [root], findFiles: recursiveJsonl, parseRow: (row) => row });
+  t.after(() => watcher.stop());
+  const messages = [];
+  watcher.on("user-message", (text) => messages.push(text));
+  watcher.start();
+  let now = Date.now();
+  watcher.fileIndex.now = () => now;
+  fs.appendFileSync(file, JSON.stringify({ type: "user", sessionId: "session", text: "missed event" }) + "\n");
+  watcher.poll();
+  assert.deepEqual(messages, []);
+  now += watcher.fileIndex.reconcileMs;
+  watcher.poll();
+  assert.deepEqual(messages, ["missed event"]);
+});
+
 test("replacing a watched root reattaches to the new directory instead of retaining the moved watch", (t) => {
   const parent = fixture(t), root = path.join(parent, "logs"), native = fakeWatch();
   fs.mkdirSync(root);
@@ -140,6 +159,9 @@ test("native external watcher skips history and detects append, new nested logs,
   const messages = [];
   watcher.on("user-message", (text) => messages.push(text));
   watcher.start();
+  // Native notifications can be lost; exercise the existing recovery path
+  // within this test's deadline without changing the production interval.
+  watcher.fileIndex.reconcileMs = 1000;
   watcher.poll();
   assert.deepEqual(messages, []);
   fs.appendFileSync(file, row("append"));
@@ -167,6 +189,7 @@ test("Codex detects resumed old threads outside the ten tailed files and newly c
   const watcher = new CodexWatcher({ getCodexHomes: () => [root] });
   t.after(() => watcher.stop());
   watcher.start();
+  watcher.fileIndex.reconcileMs = 1000;
   assert.equal(watcher.tails.has(paths[0]), false);
   const event = JSON.stringify({ type: "event_msg", payload: { type: "task_started" } }) + "\n";
   fs.appendFileSync(paths[0], event);
