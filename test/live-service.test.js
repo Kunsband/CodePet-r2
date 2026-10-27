@@ -191,6 +191,21 @@ test('completed transcripts survive reconnection and are supplied when continuin
   assert.equal(f.requests.at(-2).method, 'thread/resume');
   assert.match(f.requests.at(-1).params.prompt, /Earlier question[\s\S]*Earlier answer/);
 });
+test('each conversation retains its own project folder after changing and switching', async t => {
+  const f = fixture(t), first = path.join(f.service.root, 'first'), second = path.join(f.service.root, 'second');
+  fs.mkdirSync(first); fs.mkdirSync(second);
+  await f.service.start({ ...input('call-a'), workspace: first });
+  await f.service.stop('call-a');
+  await f.service.setWorkspace(second);
+  await f.service.selectHistory(null);
+  const other = '00000000-0000-7000-8000-000000000002';
+  f.service.history.write({ id: other, cwd: first, createdAt: 1, updatedAt: 1, messages: [] });
+  assert.equal((await f.service.selectHistory(other)).cwd, first);
+  assert.equal((await f.service.selectHistory(threadId)).cwd, second);
+  await f.service.start({ ...input('call-b'), workspace: second });
+  assert.equal(f.requests.at(-2).method, 'thread/resume');
+  assert.equal(f.requests.at(-2).params.cwd, second);
+});
 test('a changed workspace starts a fresh thread with the selected directory', async t => {
   const f = fixture(t), first = path.join(f.service.root, 'first'), second = path.join(f.service.root, 'second');
   fs.mkdirSync(first); fs.mkdirSync(second);

@@ -242,6 +242,19 @@ class LiveService extends EventEmitter {
     this.thread = id; this.threadWorkspace = record.cwd;
     return { id, cwd: record.cwd, messages: record.messages };
   }
+  async setWorkspace(cwd) {
+    await this.prepare();
+    if (this.pendingStart) throw new Error('연결이 완료된 뒤 작업 폴더를 변경해 주세요.');
+    if (!path.isAbsolute(cwd) || !fs.statSync(cwd).isDirectory()) throw new Error('작업 폴더를 확인할 수 없습니다.');
+    if (this.thread) {
+      const record = this.history.read(this.thread);
+      if (!record) throw new Error('대화 기록을 찾을 수 없습니다.');
+      record.cwd = cwd;
+      this.history.write(record);
+      if (this.call?.record?.id === record.id) this.call.record.cwd = cwd;
+      this.threadWorkspace = cwd;
+    }
+  }
   async text({ key, text }) {
     const call = this.call;
     if (!call || call.key !== key || !call.threadId) throw new Error('음성 연결이 종료되었습니다.');

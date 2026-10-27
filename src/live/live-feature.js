@@ -2,16 +2,11 @@ const path = require('node:path');
 const fs = require('node:fs');
 const { pathToFileURL } = require('node:url');
 const { LiveService, publicError } = require('./live-service');
-const { atomicWriteText } = require('../provider-profile-store');
 
 function createLiveFeature({ electron, root, defaultWorkspace = process.cwd(), getAccount, getAppearance, makeService, onWindowReady }) {
   const { BrowserWindow, ipcMain, powerMonitor, dialog } = electron;
-  const workspaceFile = path.join(root, 'workspace.json');
-  let workspace = path.resolve(defaultWorkspace);
-  try {
-    const saved = JSON.parse(fs.readFileSync(workspaceFile, 'utf8'));
-    if (typeof saved.workspace === 'string' && path.isAbsolute(saved.workspace) && fs.statSync(saved.workspace).isDirectory()) workspace = fs.realpathSync(saved.workspace);
-  } catch {}
+  const rootWorkspace = path.resolve(defaultWorkspace);
+  let workspace = rootWorkspace;
   const page = pathToFileURL(path.join(__dirname, '..', 'live.html')).href;
   let window = null, service = null;
   const ensureService = () => {
@@ -28,7 +23,7 @@ function createLiveFeature({ electron, root, defaultWorkspace = process.cwd(), g
   function openWindow() {
     if (window && !window.isDestroyed()) { if (window.isMinimized()) window.restore(); window.show(); window.focus(); return; }
     const win = new BrowserWindow({
-      width: 440, height: 560, minWidth: 300, minHeight: 480, frame: false, resizable: true,
+      width: 760, height: 600, minWidth: 300, minHeight: 480, frame: false, resizable: true,
       show: false, title: 'CodePet Live', backgroundColor: '#fafafa', autoHideMenuBar: true,
       webPreferences: { preload: path.join(__dirname, '..', 'live-preload.js'), contextIsolation: true,
         nodeIntegration: false, sandbox: true, backgroundThrottling: false, partition: 'persist:codepet-live' },
@@ -67,8 +62,7 @@ function createLiveFeature({ electron, root, defaultWorkspace = process.cwd(), g
       if (result.canceled || !result.filePaths?.[0]) return { canceled: true };
       const selected = fs.realpathSync(result.filePaths[0]);
       if (!fs.statSync(selected).isDirectory()) throw new Error('선택한 폴더를 확인할 수 없습니다.');
-      fs.mkdirSync(root, { recursive: true });
-      atomicWriteText(workspaceFile, JSON.stringify({ workspace: selected }));
+      await ensureService().setWorkspace(selected);
       workspace = selected;
       return { workspace };
     });
@@ -76,7 +70,8 @@ function createLiveFeature({ electron, root, defaultWorkspace = process.cwd(), g
     handle('live:history:list', () => ensureService().listHistory());
     handle('live:history:select', async input => {
       const result = await ensureService().selectHistory(input?.id ?? null);
-      if (result.cwd) workspace = result.cwd;
+      workspace = result.cwd || rootWorkspace;
+      result.cwd = workspace;
       return result;
     });
     handle('live:text', input => ensureService().text(input));
