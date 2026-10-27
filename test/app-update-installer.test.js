@@ -138,4 +138,9 @@ test("startup acknowledgement is restricted to the portable executable's own sta
   assert.equal(await fsp.readFile(path.join(stage, "started"), "utf8"), "started");
   acknowledgeUpdateStartup({ PORTABLE_EXECUTABLE_FILE: f.target, CODEPET_UPDATE_STAGE: f.dir });
   assert.equal(fs.existsSync(path.join(f.dir, "started")), false);
+  if (process.platform === "win32") {
+    const alternateStage = await fsp.mkdtemp(path.join(f.dir, ".codepet-update-"));
+    acknowledgeUpdateStartup({ PORTABLE_EXECUTABLE_FILE: f.target.toUpperCase(), CODEPET_UPDATE_STAGE: alternateStage });
+    assert.equal(fs.existsSync(path.join(alternateStage, "started")), true);
+  }
 });

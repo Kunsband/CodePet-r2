@@ -100,7 +100,11 @@ test("Windows helper replaces and restarts a native EXE, or restores it after fa
       assert.equal(code, fail ? 1 : 0, `${stderr}\n${log}`);
       await waitFor(() => exists(marker), `The app was not relaunched: ${log}`);
       const launches = await fs.readFile(marker, "utf8");
-      assert.equal(launches, `${fail ? "old" : "new"}|${folder}||${fail ? "1" : ""}\n`);
+      const [version, workingDirectory, inheritedLauncher, failedUpdate] = launches.trimEnd().split("|");
+      assert.equal(version, fail ? "old" : "new");
+      assert.equal(await fs.realpath(workingDirectory), await fs.realpath(folder));
+      assert.equal(inheritedLauncher, "");
+      assert.equal(failedUpdate, fail ? "1" : "");
       assert.deepEqual(await fs.readFile(target), fail ? fixtures.old : fixtures.new);
       assert.equal(await exists(stage), fail);
       if (fail) assert.match(await fs.readFile(path.join(stage, "update.log"), "utf8"), /exited before startup/);

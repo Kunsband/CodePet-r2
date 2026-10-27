@@ -159,7 +159,7 @@ function acknowledgeUpdateStartup(env = process.env) {
   if (!stage || !env.PORTABLE_EXECUTABLE_FILE) return;
   try {
     if (!path.isAbsolute(stage) || !/^\.codepet-update-[a-zA-Z0-9]+$/.test(path.basename(stage))
-      || path.dirname(stage) !== path.dirname(env.PORTABLE_EXECUTABLE_FILE)
+      || fs.realpathSync.native(path.dirname(stage)) !== fs.realpathSync.native(path.dirname(env.PORTABLE_EXECUTABLE_FILE))
       || fs.lstatSync(stage).isSymbolicLink()) return;
     fs.writeFileSync(path.join(stage, "started"), "started", { flag: "wx" });
   } catch { /* The updater retains its backup if startup cannot be acknowledged. */ }
