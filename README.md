@@ -14,6 +14,8 @@ Download the package for your platform: `.exe` for Windows, `.AppImage` for Linu
 
 Right-click the pet or tray icon to open Settings, manage accounts, or launch **Agent chat room** (`에이전트 채팅방…`).
 
+On Windows portable builds, the update button in Settings downloads and applies the new version, then restarts CodePet. On Linux and macOS, the same button opens the new version's download.
+
 ## Features
 
 - **Live activity:** Speech bubbles and animations show work, tool use, waiting, completion, and interruptions across supported CLI and desktop sessions. Choose full message content, status only, or no bubbles.
