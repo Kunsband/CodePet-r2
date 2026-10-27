@@ -485,10 +485,14 @@ const BUBBLE_CONFIG = Object.freeze({
 
 let petWindow = null;
 let settingsWindow = null;
+// Fork: Live starts in a dedicated empty folder rather than the CodePet program folder, so
+// an unapproved write (e.g. in "나 대신 승인" mode) cannot touch the app's own files.
+const liveWorkspace = path.join(os.homedir(), ".codepet", "live", "workspace");
+try { fs.mkdirSync(liveWorkspace, { recursive: true }); } catch {}
 const liveFeature = createLiveFeature({
   electron: { BrowserWindow, ipcMain, powerMonitor, dialog },
   root: path.join(os.homedir(), ".codepet", "live"),
-  defaultWorkspace: app.isPackaged ? path.dirname(process.execPath) : app.getAppPath(),
+  defaultWorkspace: liveWorkspace,
   getAccount: () => codexAccountSwitcher.getCurrentAccountSummary(),
   getAppearance: () => getAppearancePayload(),
   onWindowReady: () => sendAppearanceToWindows(),
