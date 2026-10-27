@@ -24,7 +24,7 @@ async function main() {
   const errors = [];
   const win = new BrowserWindow({ show: false, width: 1000, height: 800, frame: false,
     webPreferences: { preload: path.join(__dirname, "..", "src", "settings-preload.js"),
-      contextIsolation: true, nodeIntegration: false, offscreen: true, backgroundThrottling: false } });
+      contextIsolation: true, nodeIntegration: false, backgroundThrottling: false } });
   win.webContents.on("console-message", event => { if (event.level === "error") errors.push(event.message); });
   await win.loadFile(path.join(__dirname, "..", "src", "settings.html"));
   const js = source => win.webContents.executeJavaScript(source);
