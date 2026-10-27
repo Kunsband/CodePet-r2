@@ -707,6 +707,8 @@ async function initialize() {
 
 function registerUpdateControls() {
   const button = $("#download-update");
+  const checkButton = $("#check-update");
+  const feedback = $("#update-status");
   const version = $("#app-version");
   let checking = false;
   let busy = false;
@@ -715,6 +717,7 @@ function registerUpdateControls() {
   function renderProgress(update) {
     busy = ["downloading", "verifying", "restarting"].includes(update?.phase);
     button.disabled = busy;
+    checkButton.disabled = checking || busy;
     button.setAttribute("aria-busy", String(busy));
     const label = update?.phase === "downloading" ? `다운로드 ${update.percent || 0}%`
       : update?.phase === "verifying" ? "파일 확인 중…"
@@ -724,11 +727,14 @@ function registerUpdateControls() {
     button.setAttribute("aria-label", button.title);
     if (busy) button.hidden = false;
   }
-  async function refresh() {
+  async function refresh(force = false) {
     if (checking || busy) return;
     checking = true;
+    checkButton.disabled = true;
+    checkButton.setAttribute("aria-busy", "true");
+    feedback.textContent = "업데이트를 확인하는 중…";
     try {
-      const result = await api.checkUpdate();
+      const result = await api.checkUpdate(force);
       if (result?.currentVersion) currentVersion = `VERSION ${result.currentVersion}`;
       if (busy) return;
       button.hidden = result?.status !== "available";
@@ -736,9 +742,18 @@ function registerUpdateControls() {
         actionLabel = result.automatic ? `새 버전 ${result.latestVersion} 업데이트 후 재시작` : `새 버전 ${result.latestVersion} 다운로드`;
       }
       renderProgress(result?.update);
+      feedback.textContent = result?.status === "available" ? `새 버전 ${result.latestVersion}을 사용할 수 있습니다.`
+        : result?.status === "up-to-date" ? "최신 버전입니다."
+          : "업데이트를 확인하지 못했습니다. 연결을 확인한 뒤 다시 시도해 주세요.";
+      if (result?.retryAfterMs) feedback.textContent += ` ${Math.ceil(result.retryAfterMs / 1000)}초 후 다시 확인할 수 있습니다.`;
     } catch {
       button.hidden = true;
-    } finally { checking = false; }
+      feedback.textContent = "업데이트를 확인하지 못했습니다. 다시 시도해 주세요.";
+    } finally {
+      checking = false;
+      checkButton.disabled = busy;
+      checkButton.setAttribute("aria-busy", "false");
+    }
   }
   button.addEventListener("click", async () => {
     if (busy) return;
@@ -757,7 +772,8 @@ function registerUpdateControls() {
     }
   });
   api.onUpdateProgress?.(renderProgress);
-  window.addEventListener("focus", refresh);
+  checkButton.addEventListener("click", () => refresh(true));
+  window.addEventListener("focus", () => refresh());
   void refresh();
 }
 

@@ -53,11 +53,18 @@ class AppUpdateChecker {
     this.cached = null;
     this.expiresAt = 0;
     this.pending = null;
+    this.nextForcedCheckAt = 0;
   }
 
-  async check() {
-    if (this.cached && this.now() < this.expiresAt) return this.cached;
+  async check({ force = false } = {}) {
     if (this.pending) return this.pending;
+    const now = this.now();
+    if (this.cached && force && now < this.nextForcedCheckAt) {
+      return { ...this.cached, retryAfterMs: this.nextForcedCheckAt - now };
+    }
+    if (this.cached && !force && now < this.expiresAt) return this.cached;
+    // Manual checks may bypass a stale result, but never start a request burst.
+    if (force) this.nextForcedCheckAt = now + 10_000;
     this.pending = this.fetchLatest().finally(() => { this.pending = null; });
     return this.pending;
   }
@@ -88,9 +95,10 @@ class AppUpdateChecker {
 }
 
 function registerUpdateIpc({ ipcMain, shell, checker, updater }) {
-  ipcMain.handle("settings:check-update", async () => {
-    const { currentVersion, latestVersion, status } = await checker.check();
-    return { currentVersion, latestVersion, status, automatic: Boolean(updater?.supported), update: updater?.state };
+  ipcMain.handle("settings:check-update", async (_event, input) => {
+    const { currentVersion, latestVersion, status, retryAfterMs } = await checker.check({ force: input?.force === true });
+    return { currentVersion, latestVersion, status, ...(retryAfterMs ? { retryAfterMs } : {}),
+      automatic: Boolean(updater?.supported), update: updater?.state };
   });
   ipcMain.handle("settings:download-update", async () => {
     const result = await checker.check();

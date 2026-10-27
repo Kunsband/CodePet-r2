@@ -39,7 +39,7 @@ test('Live IPC accepts only its exact local main frame and returns appearance wi
   const expected = pathToFileURL(path.resolve('src/live.html')).href;
   f.event.senderFrame.url = 'https://untrusted.example'; assert.equal((await f.invoke('live:catalog')).ok, false);
   f.event.senderFrame.url = expected;
-  assert.deepEqual(await f.invoke('live:catalog', { refresh: true }), { ok: true, data: { refreshed: true, appearance: { workMode: true }, workspace: process.cwd() } });
+  assert.deepEqual(await f.invoke('live:catalog', { refresh: true }), { ok: true, data: { refreshed: true, appearance: { workMode: true }, workspace: os.homedir() } });
   assert.equal(f.getPrepared(), 1);
   assert.equal(f.win.options.webPreferences.sandbox, true);
   assert.equal(f.win.options.webPreferences.contextIsolation, true);
@@ -63,16 +63,18 @@ test('workspace selection applies to the selected conversation and new conversat
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'live-workspace-'));
   t.after(() => fs.rmSync(dir, { recursive: true, force: true }));
   const chosen = path.join(dir, 'chosen'); fs.mkdirSync(chosen);
-  const handlers = new Map(), service = new EventEmitter(); let selected = null, started;
+  const handlers = new Map(), service = new EventEmitter(); let selected = null, started, response = 0, deletions = 0;
   service.prepare = async () => ({}); service.dispose = () => {};
   service.setWorkspace = async cwd => { selected = cwd; };
   service.selectHistory = async id => id ? { id, cwd: chosen, messages: [] } : { messages: [] };
   service.start = async input => { started = input; };
+  service.listHistory = async () => [{ id: 'existing', title: 'Saved conversation' }];
+  service.deleteHistory = async id => { deletions++; return { id, active: true }; };
   class Window extends EventEmitter {
     constructor() { super(); this.webContents = new EventEmitter(); this.webContents.mainFrame = {}; this.webContents.session = { setPermissionCheckHandler() {}, setPermissionRequestHandler() {} }; this.webContents.setWindowOpenHandler = () => {}; }
     isDestroyed() { return false; } loadFile(file) { this.webContents.mainFrame.url = pathToFileURL(file).href; }
   }
-  const feature = createLiveFeature({ electron: { BrowserWindow: Window, ipcMain: { handle: (key, fn) => handlers.set(key, fn) }, dialog: { showOpenDialog: async () => ({ filePaths: [chosen] }) } }, root: dir, defaultWorkspace: dir, getAppearance: () => ({}), makeService: () => service });
+  const feature = createLiveFeature({ electron: { BrowserWindow: Window, ipcMain: { handle: (key, fn) => handlers.set(key, fn) }, dialog: { showOpenDialog: async () => ({ filePaths: [chosen] }), showMessageBox: async () => ({ response }) } }, root: dir, defaultWorkspace: dir, getAppearance: () => ({}), makeService: () => service });
   feature.registerIpcHandlers(); feature.openWindow(); t.after(() => feature.shutdown());
   const win = feature.getWindow(), event = { sender: win.webContents, senderFrame: win.webContents.mainFrame };
   await handlers.get('live:workspace:choose')(event);
@@ -81,4 +83,9 @@ test('workspace selection applies to the selected conversation and new conversat
   await handlers.get('live:start')(event, {}); assert.equal(started.workspace, chosen);
   await handlers.get('live:history:select')(event, { id: null });
   await handlers.get('live:start')(event, {}); assert.equal(started.workspace, dir);
+  const canceled = await handlers.get('live:history:delete')(event, { id: 'existing' });
+  assert.equal(canceled.data.canceled, true); assert.equal(deletions, 0);
+  response = 1;
+  const removed = await handlers.get('live:history:delete')(event, { id: 'existing' });
+  assert.equal(removed.data.id, 'existing'); assert.equal(removed.data.workspace, dir); assert.equal(deletions, 1);
 });
