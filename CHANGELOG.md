@@ -1,5 +1,15 @@
 # Release notes / 릴리즈 노트
 
+## 1.1.6 — 2026-10-27
+
+### English
+
+- Add a tooltip to the settings version label identifying the currently running version.
+
+### 한국어
+
+- 설정의 버전 표시에 현재 실행 중인 버전임을 알려주는 도움말을 추가했습니다.
+
 ## 1.1.5 — 2026-10-27
 
 ### English
